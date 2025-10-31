@@ -1,0 +1,9 @@
+/target
+.idea/
+.~lock.*
+*.csv
+*.db
+*.db-*
+*.sqlite
+*.lock
+
