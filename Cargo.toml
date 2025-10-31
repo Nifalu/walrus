@@ -9,3 +9,4 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 chrono = { version = "0.4", features = ["clock"] }
 chrono-tz = "0.10"
 anyhow = "1.0"
+dirs = "5.0"
