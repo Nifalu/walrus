@@ -59,6 +59,22 @@ pub fn list(conn: &Connection, count: usize) -> Result<()> {
 }
 
 pub fn reset(conn: &Connection) -> Result<()> {
+    use std::io::{self, Write};
+
+    println!("WARNING: This will delete ALL your time tracking data!");
+    println!("This action cannot be undone.");
+    print!("Type 'confirm' to proceed: ");
+    io::stdout().flush()?;
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    let input = input.trim();
+
+    if input != "confirm" {
+        println!("Reset cancelled");
+        return Ok(());
+    }
+
     queries::delete_all_sessions(conn)?;
     println!("All data cleared");
     Ok(())
