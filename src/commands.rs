@@ -209,7 +209,7 @@ fn show_weeks(conn: &Connection, count: usize) -> Result<()> {
         };
 
         let label = format!("Week {} ({} - {})",
-                            week_start.format("%W"),
+                            week_start.format("%V"),
                             week_start.format("%d.%m"),
                             week_end.format("%d.%m.%Y")
         );
