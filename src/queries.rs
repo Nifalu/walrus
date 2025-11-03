@@ -195,3 +195,34 @@ pub fn parse_datetime(s: &str) -> Result<String> {
 
     Ok(local_dt.to_rfc3339())
 }
+
+pub fn get_sessions_with_calculated_hours(conn: &Connection, limit: usize) -> Result<Vec<(Session, f64)>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, topic, start_time, end_time,
+                CASE WHEN end_time IS NOT NULL
+                     THEN (julianday(end_time) - julianday(start_time)) * 24
+                     ELSE 0.0 END as hours
+         FROM sessions
+         ORDER BY start_time DESC
+         LIMIT ?1"
+    )?;
+
+    let sessions = stmt.query_map([limit], |row| {
+        let id: i64 = row.get(0)?;
+        let topic: String = row.get(1)?;
+        let start_str: String = row.get(2)?;
+        let end_str: Option<String> = row.get(3)?;
+        let hours: f64 = row.get(4)?;
+        Ok((id, topic, start_str, end_str, hours))
+    })?;
+
+    let mut result = Vec::new();
+    for session in sessions {
+        let (id, topic, start_str, end_str, hours) = session?;
+        let start = DateTime::parse_from_rfc3339(&start_str)?;
+        let end = end_str.map(|s| DateTime::parse_from_rfc3339(&s)).transpose()?;
+        result.push((Session { id, topic, start, end }, hours));
+    }
+
+    Ok(result)
+}

@@ -53,8 +53,8 @@ pub fn show(conn: &Connection, count: usize, period: Option<Period>) -> Result<(
 }
 
 pub fn list(conn: &Connection, count: usize) -> Result<()> {
-    let sessions = queries::get_sessions(conn, count)?;
-    display::print_sessions(&sessions, true);
+    let sessions_with_hours = queries::get_sessions_with_calculated_hours(conn, count)?;
+    display::print_sessions_with_hours(&sessions_with_hours, true);
     Ok(())
 }
 
