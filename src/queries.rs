@@ -93,6 +93,16 @@ pub fn get_period_stats(
     start: NaiveDateTime,
     end: NaiveDateTime,
 ) -> Result<Vec<(String, f64)>> {
+    // Convert NaiveDateTime to timezone-aware DateTime in RFC3339 format
+    // to match the format stored in the database
+    let start_dt = Local.from_local_datetime(&start).single()
+        .ok_or_else(|| anyhow::anyhow!("Ambiguous start datetime"))?;
+    let end_dt = Local.from_local_datetime(&end).single()
+        .ok_or_else(|| anyhow::anyhow!("Ambiguous end datetime"))?;
+
+    let start_rfc3339 = start_dt.to_rfc3339();
+    let end_rfc3339 = end_dt.to_rfc3339();
+
     let mut stmt = conn.prepare(
         "SELECT topic, SUM((julianday(end_time) - julianday(start_time)) * 24) as hours
          FROM sessions
@@ -104,7 +114,7 @@ pub fn get_period_stats(
     )?;
 
     let topics = stmt.query_map(
-        rusqlite::params![start.to_string(), end.to_string()],
+        rusqlite::params![start_rfc3339, end_rfc3339],
         |row| Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
     )?;
 
