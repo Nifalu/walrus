@@ -8,7 +8,7 @@ pub fn start(conn: &Connection, topic: Option<String>) -> Result<()> {
     let topic_value = topic.as_deref().unwrap_or("default");
 
     if queries::get_active_session_for_topic(conn, topic_value)?.is_some() {
-        anyhow::bail!("Session for '{}' is already active! Stop it first with 'walrus stop'", topic_value);
+        anyhow::bail!("Session for '{}' is already active! Stop it first with 'walrus stop {}'", topic_value, topic_value);
     }
 
     queries::start_session(conn, topic_value)?;
