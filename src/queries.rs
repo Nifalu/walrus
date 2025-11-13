@@ -34,6 +34,39 @@ pub fn get_active_session(conn: &Connection) -> Result<Option<Session>> {
     }
 }
 
+pub fn get_active_session_for_topic(conn: &Connection, topic: &str) -> Result<Option<Session>> {
+    let result = conn.query_row(
+        "SELECT id, topic, start_time FROM sessions WHERE end_time IS NULL AND topic = ?1",
+        [topic],
+        |row| {
+            let id: i64 = row.get(0)?;
+            let topic: String = row.get(1)?;
+            let start_str: String = row.get(2)?;
+            Ok((id, topic, start_str))
+        },
+    ).optional()?;
+
+    if let Some((id, topic, start_str)) = result {
+        let start = DateTime::parse_from_rfc3339(&start_str)?;
+        Ok(Some(Session { id, topic, start, end: None }))
+    } else {
+        Ok(None)
+    }
+}
+
+pub fn get_all_active_sessions(conn: &Connection) -> Result<Vec<(i64, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, topic FROM sessions WHERE end_time IS NULL ORDER BY start_time DESC"
+    )?;
+
+    let sessions = stmt.query_map([], |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+    })?;
+
+    let result: Result<Vec<(i64, String)>, _> = sessions.collect();
+    result.map_err(Into::into)
+}
+
 pub fn get_sessions(conn: &Connection, limit: usize) -> Result<Vec<Session>> {
     let mut stmt = conn.prepare(
         "SELECT id, topic, start_time, end_time
