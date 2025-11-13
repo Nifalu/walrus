@@ -63,12 +63,8 @@ pub fn get_all_active_sessions(conn: &Connection) -> Result<Vec<(i64, String)>> 
         Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
     })?;
 
-    let mut result = Vec::new();
-    for session in sessions {
-        result.push(session?);
-    }
-
-    Ok(result)
+    let result: Result<Vec<(i64, String)>, _> = sessions.collect();
+    result.map_err(Into::into)
 }
 
 pub fn get_sessions(conn: &Connection, limit: usize) -> Result<Vec<Session>> {
