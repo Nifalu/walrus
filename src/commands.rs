@@ -22,30 +22,20 @@ pub fn start(conn: &Connection, topic: Option<String>) -> Result<()> {
 }
 
 pub fn stop(conn: &Connection) -> Result<()> {
-    // Get all active sessions to check if there are multiple
-    let mut stmt = conn.prepare(
-        "SELECT id, topic, start_time FROM sessions WHERE end_time IS NULL ORDER BY start_time DESC"
-    )?;
-
-    let active_sessions = stmt.query_map([], |row| {
-        let id: i64 = row.get(0)?;
-        let topic: String = row.get(1)?;
-        let start_str: String = row.get(2)?;
-        Ok((id, topic, start_str))
-    })?.collect::<Result<Vec<_>, _>>()?;
+    let active_sessions = queries::get_all_active_sessions(conn)?;
 
     if active_sessions.is_empty() {
         anyhow::bail!("No active session to stop");
     } else if active_sessions.len() > 1 {
         // Multiple active sessions - user must specify which one to stop
         println!("Multiple active sessions found:");
-        for (id, topic, _) in &active_sessions {
+        for (id, topic) in &active_sessions {
             println!("  {} - {}", id, topic);
         }
         anyhow::bail!("Please specify which session to stop using: walrus stop <topic>");
     } else {
         // Exactly one active session - stop it
-        let (id, _, _) = &active_sessions[0];
+        let (id, _) = &active_sessions[0];
         queries::stop_session(conn, *id)?;
 
         println!("Stopped tracking");

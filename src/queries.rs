@@ -54,6 +54,23 @@ pub fn get_active_session_for_topic(conn: &Connection, topic: &str) -> Result<Op
     }
 }
 
+pub fn get_all_active_sessions(conn: &Connection) -> Result<Vec<(i64, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, topic FROM sessions WHERE end_time IS NULL ORDER BY start_time DESC"
+    )?;
+
+    let sessions = stmt.query_map([], |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+    })?;
+
+    let mut result = Vec::new();
+    for session in sessions {
+        result.push(session?);
+    }
+
+    Ok(result)
+}
+
 pub fn get_sessions(conn: &Connection, limit: usize) -> Result<Vec<Session>> {
     let mut stmt = conn.prepare(
         "SELECT id, topic, start_time, end_time
