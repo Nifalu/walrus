@@ -7,24 +7,31 @@ A lightweight CLI time tracking tool written in Rust.
 git clone https://github.com/Nifalu/walrus.git
 cd walrus
 cargo build --release
-sudo cp target/release/walrus /usr/local/bin/
 ```
 
-Or add to your PATH:
+To test it locally:
 ```bash
-export PATH="$PATH:/path/to/walrus/target/release"
+./target/release/walrus
 ```
+
+To install it in your PATH:
+```bash
+cargo install --path .
+```
+
+This installs walrus to `~/.cargo/bin/`, which is automatically in your PATH on most systems.
 
 ## Usage
 
 ### Basic Commands
 ```bash
-# Start tracking
+# Start tracking a session
 walrus start
-walrus start [project name]
+walrus start [topic]
 
 # Stop tracking
 walrus stop
+walrus stop [topic]  # stops a specific topic if multiple sessions are active
 
 # Show recent sessions
 walrus show
@@ -63,6 +70,22 @@ walrus export
 # Clear all data
 walrus reset
 ```
+
+### Concurrent Sessions
+
+You can track multiple sessions with different topics simultaneously:
+
+```bash
+walrus start work       # Start a "work" session
+walrus start personal   # Start a "personal" session (in another terminal/tmux)
+
+walrus list            # Shows both as ACTIVE
+
+walrus stop work       # Stops only the "work" session, "personal" continues
+walrus stop           # Shows list of active sessions if multiple exist
+```
+
+When you try to stop without specifying a topic and multiple sessions are active, walrus will list them and ask you to specify which one to stop.
 
 ### Data Location
 
