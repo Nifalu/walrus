@@ -52,7 +52,8 @@ enum Commands {
         #[arg(short = 'e', long, value_name = "DD.MM.YYYY HH:MM")]
         end: Option<String>,
     },
-    Delete { id: i64 },
+    Drop { id: i64 },
+    DropTopic { topic: String },
     Export,
     Reset,
 }
@@ -71,7 +72,8 @@ fn main() -> Result<()> {
         Commands::List { count } => commands::list(&conn, count)?,
         Commands::Add { topic, start, end } => commands::add(&conn, topic, start, end)?,
         Commands::Edit { id, topic, start, end } => commands::edit(&conn, id, topic, start, end)?,
-        Commands::Delete { id } => commands::delete(&conn, id)?,
+        Commands::Drop { id } => commands::drop(&conn, id)?,
+        Commands::DropTopic { topic } => commands::drop_topic(&conn, &topic)?,
         Commands::Export => commands::export(&conn)?,
         Commands::Reset => commands::reset(&conn)?,
     }

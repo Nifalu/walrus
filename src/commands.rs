@@ -106,11 +106,36 @@ pub fn reset(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-pub fn delete(conn: &Connection, id: i64) -> Result<()> {
+pub fn drop(conn: &Connection, id: i64) -> Result<()> {
     if !queries::delete_session(conn, id)? {
         anyhow::bail!("Session with ID {} not found", id);
     }
-    println!("Deleted session {}", id);
+    println!("Dropped session {}", id);
+    Ok(())
+}
+
+pub fn drop_topic(conn: &Connection, topic: &str) -> Result<()> {
+    use std::io::{self, Write};
+
+    let count = queries::count_sessions_by_topic(conn, topic)?;
+    if count == 0 {
+        anyhow::bail!("No sessions found for topic '{}'", topic);
+    }
+
+    println!("This will delete {} session(s) for topic '{}'.", count, topic);
+    print!("Type 'confirm' to proceed: ");
+    io::stdout().flush()?;
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+
+    if input.trim() != "confirm" {
+        println!("Cancelled");
+        return Ok(());
+    }
+
+    let deleted = queries::delete_sessions_by_topic(conn, topic)?;
+    println!("Dropped {} session(s) for topic '{}'", deleted, topic);
     Ok(())
 }
 

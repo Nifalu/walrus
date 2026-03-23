@@ -187,6 +187,20 @@ pub fn delete_session(conn: &Connection, id: i64) -> Result<bool> {
     Ok(rows > 0)
 }
 
+pub fn count_sessions_by_topic(conn: &Connection, topic: &str) -> Result<usize> {
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM sessions WHERE topic = ?1",
+        [topic],
+        |row| row.get(0),
+    )?;
+    Ok(count as usize)
+}
+
+pub fn delete_sessions_by_topic(conn: &Connection, topic: &str) -> Result<usize> {
+    let rows = conn.execute("DELETE FROM sessions WHERE topic = ?1", [topic])?;
+    Ok(rows)
+}
+
 pub fn session_exists(conn: &Connection, id: i64) -> Result<bool> {
     let exists: bool = conn.query_row(
         "SELECT 1 FROM sessions WHERE id = ?1",
