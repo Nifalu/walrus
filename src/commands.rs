@@ -78,8 +78,11 @@ pub fn show(conn: &Connection, count: usize, period: Option<Period>) -> Result<(
     Ok(())
 }
 
-pub fn list(conn: &Connection, count: usize) -> Result<()> {
-    let sessions_with_hours = queries::get_sessions_with_calculated_hours(conn, count)?;
+pub fn list(conn: &Connection, count: usize, topic: Option<String>) -> Result<()> {
+    let sessions_with_hours = match &topic {
+        Some(t) => queries::get_sessions_with_calculated_hours_by_topic(conn, count, t)?,
+        None => queries::get_sessions_with_calculated_hours(conn, count)?,
+    };
     display::print_sessions_with_hours(&sessions_with_hours, true);
     Ok(())
 }

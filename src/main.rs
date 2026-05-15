@@ -35,6 +35,8 @@ enum Commands {
     List {
         #[arg(short = 'n', long, default_value = "10")]
         count: usize,
+        #[arg(short = 't', long)]
+        topic: Option<String>,
     },
     Add {
         topic: String,
@@ -69,7 +71,7 @@ fn main() -> Result<()> {
             None => commands::stop(&conn)?,
         },
         Commands::Show { count, period } => commands::show(&conn, count, period)?,
-        Commands::List { count } => commands::list(&conn, count)?,
+        Commands::List { count, topic } => commands::list(&conn, count, topic)?,
         Commands::Add { topic, start, end } => commands::add(&conn, topic, start, end)?,
         Commands::Edit { id, topic, start, end } => commands::edit(&conn, id, topic, start, end)?,
         Commands::Drop { id } => commands::drop(&conn, id)?,
