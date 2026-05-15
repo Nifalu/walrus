@@ -70,11 +70,16 @@ pub fn show(conn: &Connection, count: usize, period: Option<Period>, topic: Opti
         Some(Period::Month) => show_months(conn, count, &topic)?,
         Some(Period::Year) => show_years(conn, count, &topic)?,
         None => {
-            let sessions = match &topic {
-                Some(t) => queries::get_sessions_by_topic(conn, count, t)?,
-                None => queries::get_sessions(conn, count)?,
-            };
-            display::print_sessions(&sessions, false);
+            match &topic {
+                Some(t) => {
+                    let sessions = queries::get_sessions_with_calculated_hours_by_topic(conn, count, t)?;
+                    display::print_sessions_with_total(&sessions, false);
+                }
+                None => {
+                    let sessions = queries::get_sessions(conn, count)?;
+                    display::print_sessions(&sessions, false);
+                }
+            }
         }
     }
 

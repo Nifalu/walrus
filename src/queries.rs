@@ -94,34 +94,6 @@ pub fn get_sessions(conn: &Connection, limit: usize) -> Result<Vec<Session>> {
     Ok(result)
 }
 
-pub fn get_sessions_by_topic(conn: &Connection, limit: usize, topic: &str) -> Result<Vec<Session>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, topic, start_time, end_time
-         FROM sessions
-         WHERE topic = ?1
-         ORDER BY start_time DESC
-         LIMIT ?2"
-    )?;
-
-    let sessions = stmt.query_map(rusqlite::params![topic, limit], |row| {
-        let id: i64 = row.get(0)?;
-        let topic: String = row.get(1)?;
-        let start_str: String = row.get(2)?;
-        let end_str: Option<String> = row.get(3)?;
-        Ok((id, topic, start_str, end_str))
-    })?;
-
-    let mut result = Vec::new();
-    for session in sessions {
-        let (id, topic, start_str, end_str) = session?;
-        let start = DateTime::parse_from_rfc3339(&start_str)?;
-        let end = end_str.map(|s| DateTime::parse_from_rfc3339(&s)).transpose()?;
-        result.push(Session { id, topic, start, end });
-    }
-
-    Ok(result)
-}
-
 pub fn get_all_sessions_for_export(conn: &Connection) -> Result<Vec<Session>> {
     let mut stmt = conn.prepare(
         "SELECT id, topic, start_time, end_time
