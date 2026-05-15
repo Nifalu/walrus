@@ -1,6 +1,6 @@
 use rusqlite::Connection;
 use anyhow::Result;
-use chrono::{Local, NaiveDate, Duration, Datelike};
+use chrono::{Local, NaiveDate, Duration, Datelike, TimeZone};
 use crate::{queries, display};
 use crate::Period;
 
@@ -59,16 +59,16 @@ pub fn stop_topic(conn: &Connection, topic: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn show(conn: &Connection, count: usize, period: Option<Period>) -> Result<()> {
+pub fn show(conn: &Connection, count: usize, period: Option<Period>, topic: Option<String>) -> Result<()> {
     if let Some(active) = queries::get_active_session(conn)? {
         display::print_active_session(&active);
     }
 
     match period {
-        Some(Period::Day) => show_days(conn, count)?,
-        Some(Period::Week) => show_weeks(conn, count)?,
-        Some(Period::Month) => show_months(conn, count)?,
-        Some(Period::Year) => show_years(conn, count)?,
+        Some(Period::Day) => show_days(conn, count, &topic)?,
+        Some(Period::Week) => show_weeks(conn, count, &topic)?,
+        Some(Period::Month) => show_months(conn, count, &topic)?,
+        Some(Period::Year) => show_years(conn, count, &topic)?,
         None => {
             let sessions = queries::get_sessions(conn, count)?;
             display::print_sessions(&sessions, false);
@@ -84,6 +84,12 @@ pub fn list(conn: &Connection, count: usize, topic: Option<String>) -> Result<()
         None => queries::get_sessions_with_calculated_hours(conn, count)?,
     };
     display::print_sessions_with_hours(&sessions_with_hours, true);
+    Ok(())
+}
+
+pub fn topics(conn: &Connection) -> Result<()> {
+    let topics = queries::get_all_topics(conn)?;
+    display::print_topics(&topics);
     Ok(())
 }
 
@@ -142,7 +148,7 @@ pub fn drop_topic(conn: &Connection, topic: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn export(conn: &Connection) -> Result<()> {
+pub fn export(conn: &Connection, topic_filter: Option<String>, period: Option<Period>) -> Result<()> {
     let sessions = queries::get_all_sessions_for_export(conn)?;
 
     let timestamp = Local::now().format("%Y%m%d_%H%M%S");
@@ -153,8 +159,22 @@ pub fn export(conn: &Connection) -> Result<()> {
 
     writeln!(writer, "start,end,duration (hours),topic")?;
 
+    let range = period.as_ref().map(|p| compute_period_range(p));
+
     for session in sessions {
         if let Some(end) = session.end {
+            if let Some(ref t) = topic_filter {
+                if session.topic != *t {
+                    continue;
+                }
+            }
+
+            if let Some((rs, re)) = &range {
+                if session.start < *rs || session.start >= *re {
+                    continue;
+                }
+            }
+
             let duration = end.signed_duration_since(session.start);
             let hours = duration.num_seconds() as f64 / 3600.0;
 
@@ -171,6 +191,36 @@ pub fn export(conn: &Connection) -> Result<()> {
 
     println!("Exported to: {}", filename);
     Ok(())
+}
+
+fn compute_period_range(period: &Period) -> (chrono::DateTime<chrono::FixedOffset>, chrono::DateTime<chrono::FixedOffset>) {
+    let now = Local::now();
+    match period {
+        Period::Day => {
+            let start = now.date_naive().and_hms_opt(0, 0, 0).unwrap();
+            let start_dt = Local.from_local_datetime(&start).single().unwrap();
+            (start_dt.into(), now.into())
+        }
+        Period::Week => {
+            let days_back = now.weekday().num_days_from_monday() as i64;
+            let start = (now - Duration::days(days_back))
+                .date_naive()
+                .and_hms_opt(0, 0, 0)
+                .unwrap();
+            let start_dt = Local.from_local_datetime(&start).single().unwrap();
+            (start_dt.into(), now.into())
+        }
+        Period::Month => {
+            let start = now.date_naive().with_day(1).unwrap().and_hms_opt(0, 0, 0).unwrap();
+            let start_dt = Local.from_local_datetime(&start).single().unwrap();
+            (start_dt.into(), now.into())
+        }
+        Period::Year => {
+            let start = NaiveDate::from_ymd_opt(now.year(), 1, 1).unwrap().and_hms_opt(0, 0, 0).unwrap();
+            let start_dt = Local.from_local_datetime(&start).single().unwrap();
+            (start_dt.into(), now.into())
+        }
+    }
 }
 
 pub fn add(conn: &Connection, topic: String, start: String, end: String) -> Result<()> {
@@ -214,7 +264,7 @@ pub fn edit(conn: &Connection, id: i64, topic: Option<String>, start: Option<Str
     Ok(())
 }
 
-fn show_days(conn: &Connection, count: usize) -> Result<()> {
+fn show_days(conn: &Connection, count: usize, topic: &Option<String>) -> Result<()> {
     let now = Local::now();
     let mut periods = Vec::new();
 
@@ -238,7 +288,10 @@ fn show_days(conn: &Connection, count: usize) -> Result<()> {
             day_start.format("%A, %d.%m.%Y").to_string()
         };
 
-        let topics = queries::get_period_stats(conn, day_start, day_end)?;
+        let topics = match topic {
+            Some(t) => queries::get_period_stats_by_topic(conn, day_start, day_end, t)?,
+            None => queries::get_period_stats(conn, day_start, day_end)?,
+        };
         periods.push(queries::PeriodStats { label, topics });
     }
 
@@ -246,7 +299,7 @@ fn show_days(conn: &Connection, count: usize) -> Result<()> {
     Ok(())
 }
 
-fn show_weeks(conn: &Connection, count: usize) -> Result<()> {
+fn show_weeks(conn: &Connection, count: usize, topic: &Option<String>) -> Result<()> {
     let now = Local::now();
     let mut periods = Vec::new();
 
@@ -268,7 +321,10 @@ fn show_weeks(conn: &Connection, count: usize) -> Result<()> {
                             week_end.format("%d.%m.%Y")
         );
 
-        let topics = queries::get_period_stats(conn, week_start, week_end)?;
+        let topics = match topic {
+            Some(t) => queries::get_period_stats_by_topic(conn, week_start, week_end, t)?,
+            None => queries::get_period_stats(conn, week_start, week_end)?,
+        };
         periods.push(queries::PeriodStats { label, topics });
     }
 
@@ -276,7 +332,7 @@ fn show_weeks(conn: &Connection, count: usize) -> Result<()> {
     Ok(())
 }
 
-fn show_months(conn: &Connection, count: usize) -> Result<()> {
+fn show_months(conn: &Connection, count: usize, topic: &Option<String>) -> Result<()> {
     let now = Local::now();
     let mut periods = Vec::new();
 
@@ -305,7 +361,10 @@ fn show_months(conn: &Connection, count: usize) -> Result<()> {
         };
 
         let label = target_date.format("%B %Y").to_string();
-        let topics = queries::get_period_stats(conn, start, end)?;
+        let topics = match topic {
+            Some(t) => queries::get_period_stats_by_topic(conn, start, end, t)?,
+            None => queries::get_period_stats(conn, start, end)?,
+        };
         periods.push(queries::PeriodStats { label, topics });
     }
 
@@ -313,7 +372,7 @@ fn show_months(conn: &Connection, count: usize) -> Result<()> {
     Ok(())
 }
 
-fn show_years(conn: &Connection, count: usize) -> Result<()> {
+fn show_years(conn: &Connection, count: usize, topic: &Option<String>) -> Result<()> {
     let now = Local::now();
     let mut periods = Vec::new();
 
@@ -336,7 +395,10 @@ fn show_years(conn: &Connection, count: usize) -> Result<()> {
         };
 
         let label = format!("{}", target_year);
-        let topics = queries::get_period_stats(conn, start, end)?;
+        let topics = match topic {
+            Some(t) => queries::get_period_stats_by_topic(conn, start, end, t)?,
+            None => queries::get_period_stats(conn, start, end)?,
+        };
         periods.push(queries::PeriodStats { label, topics });
     }
 

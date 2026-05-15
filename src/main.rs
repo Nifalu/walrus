@@ -31,6 +31,8 @@ enum Commands {
         count: usize,
         #[arg(short = 'p', long)]
         period: Option<Period>,
+        #[arg(short = 't', long)]
+        topic: Option<String>,
     },
     List {
         #[arg(short = 'n', long, default_value = "10")]
@@ -38,6 +40,7 @@ enum Commands {
         #[arg(short = 't', long)]
         topic: Option<String>,
     },
+    Topics,
     Add {
         topic: String,
         #[arg(short = 's', long, value_name = "DD.MM.YYYY HH:MM")]
@@ -56,7 +59,12 @@ enum Commands {
     },
     Drop { id: i64 },
     DropTopic { topic: String },
-    Export,
+    Export {
+        #[arg(short = 't', long)]
+        topic: Option<String>,
+        #[arg(short = 'p', long)]
+        period: Option<Period>,
+    },
     Reset,
 }
 
@@ -70,13 +78,14 @@ fn main() -> Result<()> {
             Some(t) => commands::stop_topic(&conn, &t)?,
             None => commands::stop(&conn)?,
         },
-        Commands::Show { count, period } => commands::show(&conn, count, period)?,
+        Commands::Show { count, period, topic } => commands::show(&conn, count, period, topic)?,
         Commands::List { count, topic } => commands::list(&conn, count, topic)?,
+        Commands::Topics => commands::topics(&conn)?,
         Commands::Add { topic, start, end } => commands::add(&conn, topic, start, end)?,
         Commands::Edit { id, topic, start, end } => commands::edit(&conn, id, topic, start, end)?,
         Commands::Drop { id } => commands::drop(&conn, id)?,
         Commands::DropTopic { topic } => commands::drop_topic(&conn, &topic)?,
-        Commands::Export => commands::export(&conn)?,
+        Commands::Export { topic, period } => commands::export(&conn, topic, period)?,
         Commands::Reset => commands::reset(&conn)?,
     }
 
