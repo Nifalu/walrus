@@ -136,3 +136,21 @@ pub fn print_period_stats(stats: &[PeriodStats]) {
 
     println!();
 }
+
+pub fn print_topics(topics: &[(String, i64, f64)]) {
+    println!("\n{:<20} {:<10} {:>10}", "Topic", "Sessions", "Hours");
+    println!("{}", "─".repeat(42));
+
+    let mut total_sessions: i64 = 0;
+    let mut total_hours: f64 = 0.0;
+
+    for (topic, sessions, hours) in topics {
+        println!("{:<20} {:<10} {:>9.2}h", topic, sessions, hours);
+        total_sessions += sessions;
+        total_hours += hours;
+    }
+
+    println!("{}", "─".repeat(42));
+    println!("{:<20} {:<10} {:>9.2}h", "Total", total_sessions, total_hours);
+    println!();
+}

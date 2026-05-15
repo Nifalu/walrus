@@ -121,13 +121,75 @@ pub fn get_all_sessions_for_export(conn: &Connection) -> Result<Vec<Session>> {
     Ok(result)
 }
 
+pub fn get_period_stats_by_topic(
+    conn: &Connection,
+    start: NaiveDateTime,
+    end: NaiveDateTime,
+    topic: &str,
+) -> Result<Vec<(String, f64)>> {
+    let start_dt = Local.from_local_datetime(&start).single()
+        .ok_or_else(|| anyhow::anyhow!("Ambiguous start datetime"))?;
+    let end_dt = Local.from_local_datetime(&end).single()
+        .ok_or_else(|| anyhow::anyhow!("Ambiguous end datetime"))?;
+
+    let start_rfc3339 = start_dt.to_rfc3339();
+    let end_rfc3339 = end_dt.to_rfc3339();
+
+    let mut stmt = conn.prepare(
+        "SELECT topic, SUM((julianday(end_time) - julianday(start_time)) * 24) as hours
+         FROM sessions
+         WHERE end_time IS NOT NULL
+           AND start_time >= ?1
+           AND start_time < ?2
+           AND topic = ?3
+         GROUP BY topic
+         ORDER BY hours DESC"
+    )?;
+
+    let topics = stmt.query_map(
+        rusqlite::params![start_rfc3339, end_rfc3339, topic],
+        |row| Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
+    )?;
+
+    let mut result = Vec::new();
+    for topic in topics {
+        result.push(topic?);
+    }
+
+    Ok(result)
+}
+
+pub fn get_all_topics(conn: &Connection) -> Result<Vec<(String, i64, f64)>> {
+    let mut stmt = conn.prepare(
+        "SELECT topic, COUNT(*) as sessions,
+                SUM(CASE WHEN end_time IS NOT NULL
+                         THEN (julianday(end_time) - julianday(start_time)) * 24
+                         ELSE 0.0 END) as hours
+         FROM sessions
+         GROUP BY topic
+         ORDER BY hours DESC"
+    )?;
+
+    let topics = stmt.query_map([], |row| {
+        let topic: String = row.get(0)?;
+        let sessions: i64 = row.get(1)?;
+        let hours: f64 = row.get(2)?;
+        Ok((topic, sessions, hours))
+    })?;
+
+    let mut result = Vec::new();
+    for topic in topics {
+        result.push(topic?);
+    }
+
+    Ok(result)
+}
+
 pub fn get_period_stats(
     conn: &Connection,
     start: NaiveDateTime,
     end: NaiveDateTime,
 ) -> Result<Vec<(String, f64)>> {
-    // Convert NaiveDateTime to timezone-aware DateTime in RFC3339 format
-    // to match the format stored in the database
     let start_dt = Local.from_local_datetime(&start).single()
         .ok_or_else(|| anyhow::anyhow!("Ambiguous start datetime"))?;
     let end_dt = Local.from_local_datetime(&end).single()
@@ -255,6 +317,38 @@ pub fn get_sessions_with_calculated_hours(conn: &Connection, limit: usize) -> Re
     )?;
 
     let sessions = stmt.query_map([limit], |row| {
+        let id: i64 = row.get(0)?;
+        let topic: String = row.get(1)?;
+        let start_str: String = row.get(2)?;
+        let end_str: Option<String> = row.get(3)?;
+        let hours: f64 = row.get(4)?;
+        Ok((id, topic, start_str, end_str, hours))
+    })?;
+
+    let mut result = Vec::new();
+    for session in sessions {
+        let (id, topic, start_str, end_str, hours) = session?;
+        let start = DateTime::parse_from_rfc3339(&start_str)?;
+        let end = end_str.map(|s| DateTime::parse_from_rfc3339(&s)).transpose()?;
+        result.push((Session { id, topic, start, end }, hours));
+    }
+
+    Ok(result)
+}
+
+pub fn get_sessions_with_calculated_hours_by_topic(conn: &Connection, limit: usize, topic: &str) -> Result<Vec<(Session, f64)>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, topic, start_time, end_time,
+                CASE WHEN end_time IS NOT NULL
+                     THEN (julianday(end_time) - julianday(start_time)) * 24
+                     ELSE 0.0 END as hours
+         FROM sessions
+         WHERE topic = ?1
+         ORDER BY start_time DESC
+         LIMIT ?2"
+    )?;
+
+    let sessions = stmt.query_map(rusqlite::params![topic, limit], |row| {
         let id: i64 = row.get(0)?;
         let topic: String = row.get(1)?;
         let start_str: String = row.get(2)?;
