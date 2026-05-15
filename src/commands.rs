@@ -72,7 +72,7 @@ pub fn show(conn: &Connection, count: usize, period: Option<Period>, topic: Opti
         None => {
             match &topic {
                 Some(t) => {
-                    let sessions = queries::get_sessions_with_calculated_hours_by_topic(conn, count, t)?;
+                    let sessions = queries::get_sessions_with_calculated_hours_by_topic(conn, i64::MAX as usize, t)?;
                     display::print_sessions_with_total(&sessions, false);
                 }
                 None => {
