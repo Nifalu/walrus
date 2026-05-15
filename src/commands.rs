@@ -73,7 +73,8 @@ pub fn show(conn: &Connection, count: usize, period: Option<Period>, topic: Opti
             match &topic {
                 Some(t) => {
                     let sessions = queries::get_sessions_with_calculated_hours_by_topic(conn, i64::MAX as usize, t)?;
-                    display::print_sessions_with_total(&sessions, false);
+                    let total: f64 = sessions.iter().map(|(_, h)| h).sum();
+                    println!("\n{} total: {:.2}h\n", t, total);
                 }
                 None => {
                     let sessions = queries::get_sessions(conn, count)?;

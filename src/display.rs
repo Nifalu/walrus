@@ -95,53 +95,6 @@ pub fn print_sessions_with_hours(sessions_with_hours: &[(Session, f64)], show_id
     println!();
 }
 
-pub fn print_sessions_with_total(sessions_with_hours: &[(Session, f64)], show_id: bool) {
-    if show_id {
-        println!("\n{:<5} {:<20} {:<20} {:<20} {:>10}", "ID", "Topic", "Start", "End", "Hours");
-        println!("{}", "─".repeat(80));
-    } else {
-        println!("\n{:<20} {:<20} {:<20} {:>10}", "Topic", "Start", "End", "Hours");
-        println!("{}", "─".repeat(75));
-    }
-
-    let mut total_hours: f64 = 0.0;
-
-    for (session, hours) in sessions_with_hours {
-        if let Some(end) = session.end {
-            total_hours += hours;
-            if show_id {
-                println!(
-                    "{:<5} {:<20} {:<20} {:<20} {:>9.2}h",
-                    session.id, session.topic,
-                    session.start.format("%d.%m.%Y %H:%M"),
-                    end.format("%d.%m.%Y %H:%M"),
-                    hours
-                );
-            } else {
-                println!(
-                    "{:<20} {:<20} {:<20} {:>9.2}h",
-                    session.topic,
-                    session.start.format("%d.%m.%Y %H:%M"),
-                    end.format("%d.%m.%Y %H:%M"),
-                    hours
-                );
-            }
-        } else if show_id {
-            println!(
-                "{:<5} {:<20} {:<20} {:<20} {:>10}",
-                session.id, session.topic,
-                session.start.format("%d.%m.%Y %H:%M"),
-                "ACTIVE",
-                "-"
-            );
-        }
-    }
-
-    println!("{}", "─".repeat(75));
-    println!("{:<60} {:>9.2}h", "Total", total_hours);
-    println!();
-}
-
 pub fn print_period_stats(stats: &[PeriodStats]) {
     println!();
 
