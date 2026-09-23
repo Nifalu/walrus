@@ -7,11 +7,11 @@ use crate::Period;
 pub fn start(conn: &Connection, topic: Option<String>) -> Result<()> {
     let topic_value = topic.as_deref().unwrap_or("default");
 
-    if queries::get_active_session_for_topic(conn, topic_value)?.is_some() {
+    // Atomic: refuses to open a second session for an already-active topic,
+    // even when two walrus processes race (see queries::start_session).
+    if !queries::start_session(conn, topic_value)? {
         anyhow::bail!("Session for '{}' is already active! Stop it first with 'walrus stop {}'", topic_value, topic_value);
     }
-
-    queries::start_session(conn, topic_value)?;
 
     match topic {
         Some(t) => println!("Started: {}", t),
@@ -22,21 +22,20 @@ pub fn start(conn: &Connection, topic: Option<String>) -> Result<()> {
 }
 
 pub fn stop(conn: &Connection) -> Result<()> {
-    let active_sessions = queries::get_all_active_sessions(conn)?;
+    let active_sessions = queries::get_active_sessions(conn)?;
 
     if active_sessions.is_empty() {
         anyhow::bail!("No active session to stop");
     } else if active_sessions.len() > 1 {
         // Multiple active sessions - user must specify which one to stop
         println!("Multiple active sessions found:");
-        for (id, topic) in &active_sessions {
-            println!("  {} - {}", id, topic);
+        for session in &active_sessions {
+            println!("  {} - {}", session.id, session.topic);
         }
         anyhow::bail!("Please specify which session to stop using: walrus stop <topic>");
     } else {
         // Exactly one active session - stop it
-        let (id, _) = &active_sessions[0];
-        queries::stop_session(conn, *id)?;
+        queries::stop_session(conn, active_sessions[0].id)?;
 
         println!("Stopped tracking");
         let sessions = queries::get_sessions(conn, 1)?;
@@ -47,12 +46,18 @@ pub fn stop(conn: &Connection) -> Result<()> {
 }
 
 pub fn stop_topic(conn: &Connection, topic: &str) -> Result<()> {
-    let active = queries::get_active_session_for_topic(conn, topic)?
-        .ok_or_else(|| anyhow::anyhow!("No active session for '{}' to stop", topic))?;
+    // Close ALL open sessions of the topic: duplicates from earlier races or
+    // manual starts must not survive a stop.
+    let stopped = queries::stop_all_open_sessions(conn, topic)?;
 
-    queries::stop_session(conn, active.id)?;
+    if stopped == 0 {
+        anyhow::bail!("No active session for '{}' to stop", topic);
+    }
 
     println!("Stopped tracking");
+    if stopped > 1 {
+        println!("({} sessions)", stopped);
+    }
     let sessions = queries::get_sessions(conn, 1)?;
     display::print_sessions(&sessions, false);
 
@@ -60,7 +65,9 @@ pub fn stop_topic(conn: &Connection, topic: &str) -> Result<()> {
 }
 
 pub fn show(conn: &Connection, count: usize, period: Option<Period>, topic: Option<String>) -> Result<()> {
-    if let Some(active) = queries::get_active_session(conn)? {
+    // List every open session: several can legitimately be active at once
+    // (e.g. one per attached tmux session).
+    for active in queries::get_active_sessions(conn)? {
         display::print_active_session(&active);
     }
 

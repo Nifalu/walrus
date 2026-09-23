@@ -14,57 +14,26 @@ pub struct PeriodStats {
     pub topics: Vec<(String, f64)>,
 }
 
-pub fn get_active_session(conn: &Connection) -> Result<Option<Session>> {
-    let result = conn.query_row(
-        "SELECT id, topic, start_time FROM sessions WHERE end_time IS NULL",
-        [],
-        |row| {
-            let id: i64 = row.get(0)?;
-            let topic: String = row.get(1)?;
-            let start_str: String = row.get(2)?;
-            Ok((id, topic, start_str))
-        },
-    ).optional()?;
-
-    if let Some((id, topic, start_str)) = result {
-        let start = DateTime::parse_from_rfc3339(&start_str)?;
-        Ok(Some(Session { id, topic, start, end: None }))
-    } else {
-        Ok(None)
-    }
-}
-
-pub fn get_active_session_for_topic(conn: &Connection, topic: &str) -> Result<Option<Session>> {
-    let result = conn.query_row(
-        "SELECT id, topic, start_time FROM sessions WHERE end_time IS NULL AND topic = ?1",
-        [topic],
-        |row| {
-            let id: i64 = row.get(0)?;
-            let topic: String = row.get(1)?;
-            let start_str: String = row.get(2)?;
-            Ok((id, topic, start_str))
-        },
-    ).optional()?;
-
-    if let Some((id, topic, start_str)) = result {
-        let start = DateTime::parse_from_rfc3339(&start_str)?;
-        Ok(Some(Session { id, topic, start, end: None }))
-    } else {
-        Ok(None)
-    }
-}
-
-pub fn get_all_active_sessions(conn: &Connection) -> Result<Vec<(i64, String)>> {
+pub fn get_active_sessions(conn: &Connection) -> Result<Vec<Session>> {
     let mut stmt = conn.prepare(
-        "SELECT id, topic FROM sessions WHERE end_time IS NULL ORDER BY start_time DESC"
+        "SELECT id, topic, start_time FROM sessions WHERE end_time IS NULL ORDER BY start_time DESC"
     )?;
 
     let sessions = stmt.query_map([], |row| {
-        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        let id: i64 = row.get(0)?;
+        let topic: String = row.get(1)?;
+        let start_str: String = row.get(2)?;
+        Ok((id, topic, start_str))
     })?;
 
-    let result: Result<Vec<(i64, String)>, _> = sessions.collect();
-    result.map_err(Into::into)
+    let mut result = Vec::new();
+    for session in sessions {
+        let (id, topic, start_str) = session?;
+        let start = DateTime::parse_from_rfc3339(&start_str)?;
+        result.push(Session { id, topic, start, end: None });
+    }
+
+    Ok(result)
 }
 
 pub fn get_sessions(conn: &Connection, limit: usize) -> Result<Vec<Session>> {
@@ -221,13 +190,31 @@ pub fn get_period_stats(
     Ok(result)
 }
 
-pub fn start_session(conn: &Connection, topic: &str) -> Result<()> {
+/// Insert a new open session. Atomic: check and insert happen in one
+/// statement, so two racing walrus processes cannot both open the same topic
+/// (one inserts, the other's NOT EXISTS sees it and inserts nothing). Returns
+/// false if the topic was already active.
+pub fn start_session(conn: &Connection, topic: &str) -> Result<bool> {
     let now = Local::now().to_rfc3339();
-    conn.execute(
-        "INSERT INTO sessions (topic, start_time) VALUES (?1, ?2)",
+    let result = conn.execute(
+        "INSERT INTO sessions (topic, start_time)
+         SELECT ?1, ?2
+         WHERE NOT EXISTS (
+             SELECT 1 FROM sessions WHERE topic = ?1 AND end_time IS NULL
+         )",
         [Some(topic), Some(&now)],
-    )?;
-    Ok(())
+    );
+
+    let inserted = match result {
+        Ok(n) => n,
+        // The partial unique index tripped in a race after all: another
+        // process opened this topic between check and insert.
+        Err(rusqlite::Error::SqliteFailure(e, _))
+            if e.code == rusqlite::ErrorCode::ConstraintViolation => 0,
+        Err(e) => return Err(e.into()),
+    };
+
+    Ok(inserted > 0)
 }
 
 pub fn stop_session(conn: &Connection, id: i64) -> Result<()> {
@@ -237,6 +224,17 @@ pub fn stop_session(conn: &Connection, id: i64) -> Result<()> {
         [&now, &id.to_string()],
     )?;
     Ok(())
+}
+
+/// Close every open session of a topic (idempotent), so duplicate open rows
+/// cannot survive a stop. Returns how many sessions were closed.
+pub fn stop_all_open_sessions(conn: &Connection, topic: &str) -> Result<usize> {
+    let now = Local::now().to_rfc3339();
+    let stopped = conn.execute(
+        "UPDATE sessions SET end_time = ?1 WHERE topic = ?2 AND end_time IS NULL",
+        rusqlite::params![now, topic],
+    )?;
+    Ok(stopped)
 }
 
 pub fn delete_all_sessions(conn: &Connection) -> Result<()> {
