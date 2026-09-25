@@ -67,9 +67,7 @@ pub fn stop_topic(conn: &Connection, topic: &str) -> Result<()> {
 pub fn show(conn: &Connection, count: usize, period: Option<Period>, topic: Option<String>) -> Result<()> {
     // List every open session: several can legitimately be active at once
     // (e.g. one per attached tmux session).
-    for active in queries::get_active_sessions(conn)? {
-        display::print_active_session(&active);
-    }
+    display::print_active_sessions(&queries::get_active_sessions(conn)?);
 
     match period {
         Some(Period::Day) => show_days(conn, count, &topic)?,

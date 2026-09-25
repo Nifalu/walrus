@@ -1,11 +1,19 @@
 use crate::queries::{Session, PeriodStats};
 use chrono::Local;
 
-pub fn print_active_session(session: &Session) {
+pub fn print_active_sessions(sessions: &[Session]) {
+    if sessions.is_empty() {
+        return;
+    }
+
     let now = Local::now();
-    let duration = now.signed_duration_since(session.start);
-    let hours = duration.num_seconds() as f64 / 3600.0;
-    println!("\nActive: {} ({:.2}h)\n", session.topic, hours);
+    println!("\nActive sessions:");
+    for session in sessions {
+        let duration = now.signed_duration_since(session.start);
+        let hours = duration.num_seconds() as f64 / 3600.0;
+        println!("  {} ({:.2}h)", session.topic, hours);
+    }
+    println!();
 }
 
 pub fn print_sessions(sessions: &[Session], show_id: bool) {
