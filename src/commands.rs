@@ -64,7 +64,7 @@ pub fn stop_topic(conn: &Connection, topic: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn show(conn: &Connection, count: usize, period: Option<Period>, topic: Option<String>) -> Result<()> {
+pub fn show(conn: &Connection, count: usize, period: Option<Period>, topic: Vec<String>) -> Result<()> {
     // List every open session: several can legitimately be active at once
     // (e.g. one per attached tmux session).
     display::print_active_sessions(&queries::get_active_sessions(conn)?);
@@ -75,20 +75,19 @@ pub fn show(conn: &Connection, count: usize, period: Option<Period>, topic: Opti
         Some(Period::Month) => show_months(conn, count, &topic)?,
         Some(Period::Year) => show_years(conn, count, &topic)?,
         None => {
-            match &topic {
-                Some(t) => {
-                    let sessions = queries::get_sessions_with_calculated_hours_by_topic(conn, i64::MAX as usize, t)?;
-                    let total: f64 = sessions.iter().map(|(_, h)| h).sum();
-                    println!("\nAll time");
-                    println!("  {:<20} {:>8.2}h", t, total);
-                    println!("  {}", "─".repeat(30));
-                    println!("  {:<20} {:>8.2}h", "Total", total);
-                    println!();
+            if topic.is_empty() {
+                let sessions = queries::get_sessions(conn, count)?;
+                display::print_sessions(&sessions, false);
+            } else {
+                let totals = queries::get_all_time_totals_by_topics(conn, &topic)?;
+                let grand_total: f64 = totals.iter().map(|(_, h)| *h).sum();
+                println!("\nAll time");
+                for (topic_name, hours) in totals {
+                    println!("  {:<20} {:>8.2}h", topic_name, hours);
                 }
-                None => {
-                    let sessions = queries::get_sessions(conn, count)?;
-                    display::print_sessions(&sessions, false);
-                }
+                println!("  {}", "─".repeat(30));
+                println!("  {:<20} {:>8.2}h", "Total", grand_total);
+                println!();
             }
         }
     }
@@ -96,11 +95,8 @@ pub fn show(conn: &Connection, count: usize, period: Option<Period>, topic: Opti
     Ok(())
 }
 
-pub fn list(conn: &Connection, count: usize, topic: Option<String>) -> Result<()> {
-    let sessions_with_hours = match &topic {
-        Some(t) => queries::get_sessions_with_calculated_hours_by_topic(conn, count, t)?,
-        None => queries::get_sessions_with_calculated_hours(conn, count)?,
-    };
+pub fn list(conn: &Connection, count: usize, topic: Vec<String>) -> Result<()> {
+    let sessions_with_hours = queries::get_sessions_with_calculated_hours_by_topics(conn, count, &topic)?;
     display::print_sessions_with_hours(&sessions_with_hours, true);
     Ok(())
 }
@@ -166,8 +162,8 @@ pub fn drop_topic(conn: &Connection, topic: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn export(conn: &Connection, topic_filter: Option<String>, period: Option<Period>) -> Result<()> {
-    let sessions = queries::get_all_sessions_for_export(conn)?;
+pub fn export(conn: &Connection, topic_filter: Vec<String>, period: Option<Period>) -> Result<()> {
+    let sessions = queries::get_all_sessions_for_export_by_topics(conn, &topic_filter)?;
 
     let timestamp = Local::now().format("%Y%m%d_%H%M%S");
     let filename = format!("walrus_export_{}.csv", timestamp);
@@ -181,12 +177,6 @@ pub fn export(conn: &Connection, topic_filter: Option<String>, period: Option<Pe
 
     for session in sessions {
         if let Some(end) = session.end {
-            if let Some(ref t) = topic_filter {
-                if session.topic != *t {
-                    continue;
-                }
-            }
-
             if let Some((rs, re)) = &range {
                 if session.start < *rs || session.start >= *re {
                     continue;
@@ -282,7 +272,7 @@ pub fn edit(conn: &Connection, id: i64, topic: Option<String>, start: Option<Str
     Ok(())
 }
 
-fn show_days(conn: &Connection, count: usize, topic: &Option<String>) -> Result<()> {
+fn show_days(conn: &Connection, count: usize, topics: &[String]) -> Result<()> {
     let now = Local::now();
     let mut periods = Vec::new();
 
@@ -306,9 +296,10 @@ fn show_days(conn: &Connection, count: usize, topic: &Option<String>) -> Result<
             day_start.format("%A, %d.%m.%Y").to_string()
         };
 
-        let topics = match topic {
-            Some(t) => queries::get_period_stats_by_topic(conn, day_start, day_end, t)?,
-            None => queries::get_period_stats(conn, day_start, day_end)?,
+        let topics = if topics.is_empty() {
+            queries::get_period_stats(conn, day_start, day_end)?
+        } else {
+            queries::get_period_stats_by_topics(conn, day_start, day_end, topics)?
         };
         periods.push(queries::PeriodStats { label, topics });
     }
@@ -317,7 +308,7 @@ fn show_days(conn: &Connection, count: usize, topic: &Option<String>) -> Result<
     Ok(())
 }
 
-fn show_weeks(conn: &Connection, count: usize, topic: &Option<String>) -> Result<()> {
+fn show_weeks(conn: &Connection, count: usize, topics: &[String]) -> Result<()> {
     let now = Local::now();
     let mut periods = Vec::new();
 
@@ -339,9 +330,10 @@ fn show_weeks(conn: &Connection, count: usize, topic: &Option<String>) -> Result
                             week_end.format("%d.%m.%Y")
         );
 
-        let topics = match topic {
-            Some(t) => queries::get_period_stats_by_topic(conn, week_start, week_end, t)?,
-            None => queries::get_period_stats(conn, week_start, week_end)?,
+        let topics = if topics.is_empty() {
+            queries::get_period_stats(conn, week_start, week_end)?
+        } else {
+            queries::get_period_stats_by_topics(conn, week_start, week_end, topics)?
         };
         periods.push(queries::PeriodStats { label, topics });
     }
@@ -350,7 +342,7 @@ fn show_weeks(conn: &Connection, count: usize, topic: &Option<String>) -> Result
     Ok(())
 }
 
-fn show_months(conn: &Connection, count: usize, topic: &Option<String>) -> Result<()> {
+fn show_months(conn: &Connection, count: usize, topics: &[String]) -> Result<()> {
     let now = Local::now();
     let mut periods = Vec::new();
 
@@ -379,9 +371,10 @@ fn show_months(conn: &Connection, count: usize, topic: &Option<String>) -> Resul
         };
 
         let label = target_date.format("%B %Y").to_string();
-        let topics = match topic {
-            Some(t) => queries::get_period_stats_by_topic(conn, start, end, t)?,
-            None => queries::get_period_stats(conn, start, end)?,
+        let topics = if topics.is_empty() {
+            queries::get_period_stats(conn, start, end)?
+        } else {
+            queries::get_period_stats_by_topics(conn, start, end, topics)?
         };
         periods.push(queries::PeriodStats { label, topics });
     }
@@ -390,7 +383,7 @@ fn show_months(conn: &Connection, count: usize, topic: &Option<String>) -> Resul
     Ok(())
 }
 
-fn show_years(conn: &Connection, count: usize, topic: &Option<String>) -> Result<()> {
+fn show_years(conn: &Connection, count: usize, topics: &[String]) -> Result<()> {
     let now = Local::now();
     let mut periods = Vec::new();
 
@@ -413,9 +406,10 @@ fn show_years(conn: &Connection, count: usize, topic: &Option<String>) -> Result
         };
 
         let label = format!("{}", target_year);
-        let topics = match topic {
-            Some(t) => queries::get_period_stats_by_topic(conn, start, end, t)?,
-            None => queries::get_period_stats(conn, start, end)?,
+        let topics = if topics.is_empty() {
+            queries::get_period_stats(conn, start, end)?
+        } else {
+            queries::get_period_stats_by_topics(conn, start, end, topics)?
         };
         periods.push(queries::PeriodStats { label, topics });
     }
