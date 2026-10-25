@@ -42,6 +42,7 @@ walrus show -p day          # today
 walrus show -p week         # this week
 walrus show -p month        # this month
 walrus show -p year         # this year
+walrus show -t cvlt -t home -p week
 
 # Multiple periods
 walrus show -p week -n 4    # last 4 weeks
@@ -53,6 +54,7 @@ walrus show -p month -n 6   # last 6 months
 # List sessions with IDs
 walrus list
 walrus list -n 20
+walrus list -t cvlt -t home -n 20
 
 # Add a session manually
 walrus add "topic" -s "31.10.2025 09:00" -e "31.10.2025 12:30"
@@ -66,6 +68,7 @@ walrus delete <id>
 
 # Export to CSV
 walrus export
+walrus export -t cvlt -t home -p month
 
 # Clear all data
 walrus reset
