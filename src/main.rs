@@ -1,10 +1,10 @@
-mod commands;
 mod db;
-mod display;
+mod commands;
 mod queries;
+mod display;
 
-use anyhow::Result;
 use clap::{ArgAction, Parser, Subcommand, ValueEnum};
+use anyhow::Result;
 
 #[derive(Parser)]
 #[command(name = "walrus")]
@@ -24,12 +24,8 @@ pub enum Period {
 
 #[derive(Subcommand)]
 enum Commands {
-    Start {
-        topic: Option<String>,
-    },
-    Stop {
-        topic: Option<String>,
-    },
+    Start { topic: Option<String> },
+    Stop { topic: Option<String> },
     Show {
         #[arg(short = 'n', long, default_value = "1")]
         count: usize,
@@ -61,12 +57,8 @@ enum Commands {
         #[arg(short = 'e', long, value_name = "DD.MM.YYYY HH:MM")]
         end: Option<String>,
     },
-    Drop {
-        id: i64,
-    },
-    DropTopic {
-        topic: String,
-    },
+    Drop { id: i64 },
+    DropTopic { topic: String },
     Export {
         #[arg(short = 't', long, action = ArgAction::Append)]
         topic: Vec<String>,
@@ -86,20 +78,11 @@ fn main() -> Result<()> {
             Some(t) => commands::stop_topic(&conn, &t)?,
             None => commands::stop(&conn)?,
         },
-        Commands::Show {
-            count,
-            period,
-            topic,
-        } => commands::show(&conn, count, period, topic)?,
+        Commands::Show { count, period, topic } => commands::show(&conn, count, period, topic)?,
         Commands::List { count, topic } => commands::list(&conn, count, topic)?,
         Commands::Topics => commands::topics(&conn)?,
         Commands::Add { topic, start, end } => commands::add(&conn, topic, start, end)?,
-        Commands::Edit {
-            id,
-            topic,
-            start,
-            end,
-        } => commands::edit(&conn, id, topic, start, end)?,
+        Commands::Edit { id, topic, start, end } => commands::edit(&conn, id, topic, start, end)?,
         Commands::Drop { id } => commands::drop(&conn, id)?,
         Commands::DropTopic { topic } => commands::drop_topic(&conn, &topic)?,
         Commands::Export { topic, period } => commands::export(&conn, topic, period)?,

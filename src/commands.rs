@@ -1,8 +1,8 @@
-use crate::Period;
-use crate::{display, queries};
-use anyhow::Result;
-use chrono::{Datelike, Duration, Local, NaiveDate, TimeZone};
 use rusqlite::Connection;
+use anyhow::Result;
+use chrono::{Local, NaiveDate, Duration, Datelike, TimeZone};
+use crate::{queries, display};
+use crate::Period;
 
 pub fn start(conn: &Connection, topic: Option<String>) -> Result<()> {
     let topic_value = topic.as_deref().unwrap_or("default");
@@ -10,11 +10,7 @@ pub fn start(conn: &Connection, topic: Option<String>) -> Result<()> {
     // Atomic: refuses to open a second session for an already-active topic,
     // even when two walrus processes race (see queries::start_session).
     if !queries::start_session(conn, topic_value)? {
-        anyhow::bail!(
-            "Session for '{}' is already active! Stop it first with 'walrus stop {}'",
-            topic_value,
-            topic_value
-        );
+        anyhow::bail!("Session for '{}' is already active! Stop it first with 'walrus stop {}'", topic_value, topic_value);
     }
 
     match topic {
@@ -68,12 +64,7 @@ pub fn stop_topic(conn: &Connection, topic: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn show(
-    conn: &Connection,
-    count: usize,
-    period: Option<Period>,
-    topic: Vec<String>,
-) -> Result<()> {
+pub fn show(conn: &Connection, count: usize, period: Option<Period>, topic: Vec<String>) -> Result<()> {
     // List every open session: several can legitimately be active at once
     // (e.g. one per attached tmux session).
     display::print_active_sessions(&queries::get_active_sessions(conn)?);
@@ -89,8 +80,7 @@ pub fn show(
                 display::print_sessions(&sessions, false);
             } else {
                 let totals = queries::get_all_time_totals_by_topics(conn, &topic)?;
-                let grand_total: f64 = totals.iter().map(|(_, hours)| *hours).sum();
-
+                let grand_total: f64 = totals.iter().map(|(_, h)| *h).sum();
                 println!("\nAll time");
                 for (topic_name, hours) in totals {
                     println!("  {:<20} {:>8.2}h", topic_name, hours);
@@ -106,8 +96,7 @@ pub fn show(
 }
 
 pub fn list(conn: &Connection, count: usize, topic: Vec<String>) -> Result<()> {
-    let sessions_with_hours =
-        queries::get_sessions_with_calculated_hours_by_topics(conn, count, &topic)?;
+    let sessions_with_hours = queries::get_sessions_with_calculated_hours_by_topics(conn, count, &topic)?;
     display::print_sessions_with_hours(&sessions_with_hours, true);
     Ok(())
 }
@@ -156,10 +145,7 @@ pub fn drop_topic(conn: &Connection, topic: &str) -> Result<()> {
         anyhow::bail!("No sessions found for topic '{}'", topic);
     }
 
-    println!(
-        "This will delete {} session(s) for topic '{}'.",
-        count, topic
-    );
+    println!("This will delete {} session(s) for topic '{}'.", count, topic);
     print!("Type 'confirm' to proceed: ");
     io::stdout().flush()?;
 
@@ -215,12 +201,7 @@ pub fn export(conn: &Connection, topic_filter: Vec<String>, period: Option<Perio
     Ok(())
 }
 
-fn compute_period_range(
-    period: &Period,
-) -> (
-    chrono::DateTime<chrono::FixedOffset>,
-    chrono::DateTime<chrono::FixedOffset>,
-) {
+fn compute_period_range(period: &Period) -> (chrono::DateTime<chrono::FixedOffset>, chrono::DateTime<chrono::FixedOffset>) {
     let now = Local::now();
     match period {
         Period::Day => {
@@ -238,20 +219,12 @@ fn compute_period_range(
             (start_dt.into(), now.into())
         }
         Period::Month => {
-            let start = now
-                .date_naive()
-                .with_day(1)
-                .unwrap()
-                .and_hms_opt(0, 0, 0)
-                .unwrap();
+            let start = now.date_naive().with_day(1).unwrap().and_hms_opt(0, 0, 0).unwrap();
             let start_dt = Local.from_local_datetime(&start).single().unwrap();
             (start_dt.into(), now.into())
         }
         Period::Year => {
-            let start = NaiveDate::from_ymd_opt(now.year(), 1, 1)
-                .unwrap()
-                .and_hms_opt(0, 0, 0)
-                .unwrap();
+            let start = NaiveDate::from_ymd_opt(now.year(), 1, 1).unwrap().and_hms_opt(0, 0, 0).unwrap();
             let start_dt = Local.from_local_datetime(&start).single().unwrap();
             (start_dt.into(), now.into())
         }
@@ -268,8 +241,7 @@ pub fn add(conn: &Connection, topic: String, start: String, end: String) -> Resu
 
     queries::insert_session(conn, &topic, &start_dt, &end_dt)?;
 
-    let duration = end_dt
-        .parse::<chrono::DateTime<chrono::FixedOffset>>()?
+    let duration = end_dt.parse::<chrono::DateTime<chrono::FixedOffset>>()?
         .signed_duration_since(start_dt.parse::<chrono::DateTime<chrono::FixedOffset>>()?);
     let hours = duration.num_seconds() as f64 / 3600.0;
 
@@ -277,13 +249,7 @@ pub fn add(conn: &Connection, topic: String, start: String, end: String) -> Resu
     Ok(())
 }
 
-pub fn edit(
-    conn: &Connection,
-    id: i64,
-    topic: Option<String>,
-    start: Option<String>,
-    end: Option<String>,
-) -> Result<()> {
+pub fn edit(conn: &Connection, id: i64, topic: Option<String>, start: Option<String>, end: Option<String>) -> Result<()> {
     if !queries::session_exists(conn, id)? {
         anyhow::bail!("Session with ID {} not found", id);
     }
@@ -348,22 +314,20 @@ fn show_weeks(conn: &Connection, count: usize, topics: &[String]) -> Result<()> 
 
     for i in 0..count {
         let days_back = (i * 7) as i64;
-        let week_start = (now
-            - Duration::days(days_back + now.weekday().num_days_from_monday() as i64))
-        .date_naive()
-        .and_hms_opt(0, 0, 0)
-        .unwrap();
+        let week_start = (now - Duration::days(days_back + now.weekday().num_days_from_monday() as i64))
+            .date_naive()
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
         let week_end = if i == 0 {
             now.naive_local()
         } else {
             week_start + Duration::days(7)
         };
 
-        let label = format!(
-            "Week {} ({} - {})",
-            week_start.format("%V"),
-            week_start.format("%d.%m"),
-            week_end.format("%d.%m.%Y")
+        let label = format!("Week {} ({} - {})",
+                            week_start.format("%V"),
+                            week_start.format("%d.%m"),
+                            week_end.format("%d.%m.%Y")
         );
 
         let topics = if topics.is_empty() {
@@ -394,11 +358,7 @@ fn show_months(conn: &Connection, count: usize, topics: &[String]) -> Result<()>
             NaiveDate::from_ymd_opt(new_year, new_month as u32, 1).unwrap()
         };
 
-        let start = target_date
-            .with_day(1)
-            .unwrap()
-            .and_hms_opt(0, 0, 0)
-            .unwrap();
+        let start = target_date.with_day(1).unwrap().and_hms_opt(0, 0, 0).unwrap();
         let end = if i == 0 {
             now.naive_local()
         } else {
