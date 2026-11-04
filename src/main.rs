@@ -3,7 +3,7 @@ mod commands;
 mod queries;
 mod display;
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 use anyhow::Result;
 
 #[derive(Parser)]
@@ -31,14 +31,14 @@ enum Commands {
         count: usize,
         #[arg(short = 'p', long)]
         period: Option<Period>,
-        #[arg(short = 't', long)]
-        topic: Option<String>,
+        #[arg(short = 't', long, action = ArgAction::Append)]
+        topic: Vec<String>,
     },
     List {
         #[arg(short = 'n', long, default_value = "10")]
         count: usize,
-        #[arg(short = 't', long)]
-        topic: Option<String>,
+        #[arg(short = 't', long, action = ArgAction::Append)]
+        topic: Vec<String>,
     },
     Topics,
     Add {
@@ -60,8 +60,8 @@ enum Commands {
     Drop { id: i64 },
     DropTopic { topic: String },
     Export {
-        #[arg(short = 't', long)]
-        topic: Option<String>,
+        #[arg(short = 't', long, action = ArgAction::Append)]
+        topic: Vec<String>,
         #[arg(short = 'p', long)]
         period: Option<Period>,
     },
