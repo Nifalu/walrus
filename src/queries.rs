@@ -14,6 +14,23 @@ pub struct PeriodStats {
     pub topics: Vec<(String, f64)>,
 }
 
+/// Read the (id, topic, start_time, end_time) columns of a sessions row.
+/// Timestamps are stored as RFC 3339 strings; parse_session_row turns them
+/// into datetimes.
+fn read_session_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<(i64, String, String, Option<String>)> {
+    Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+}
+
+/// Turn a raw session row into a Session, parsing the RFC 3339 timestamps.
+fn parse_session_row((id, topic, start, end): (i64, String, String, Option<String>)) -> Result<Session> {
+    Ok(Session {
+        id,
+        topic,
+        start: DateTime::parse_from_rfc3339(&start)?,
+        end: end.map(|e| DateTime::parse_from_rfc3339(&e)).transpose()?,
+    })
+}
+
 /// Sessions shorter than this are dropped entirely when stopped.
 const MIN_SESSION_SECS: f64 = 60.0;
 
@@ -33,24 +50,19 @@ impl StopOutcome {
 
 pub fn get_active_sessions(conn: &Connection) -> Result<Vec<Session>> {
     let mut stmt = conn.prepare(
-        "SELECT id, topic, start_time FROM sessions WHERE end_time IS NULL ORDER BY start_time DESC"
+        // end_time is selected for uniform row mapping; it is NULL by the
+        // WHERE clause, so Session::end is always None here.
+        "SELECT id, topic, start_time, end_time FROM sessions WHERE end_time IS NULL ORDER BY start_time DESC"
     )?;
 
-    let sessions = stmt.query_map([], |row| {
-        let id: i64 = row.get(0)?;
-        let topic: String = row.get(1)?;
-        let start_str: String = row.get(2)?;
-        Ok((id, topic, start_str))
-    })?;
+    let sessions = stmt
+        .query_map([], read_session_row)?
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .map(parse_session_row)
+        .collect::<Result<Vec<_>, _>>()?;
 
-    let mut result = Vec::new();
-    for session in sessions {
-        let (id, topic, start_str) = session?;
-        let start = DateTime::parse_from_rfc3339(&start_str)?;
-        result.push(Session { id, topic, start, end: None });
-    }
-
-    Ok(result)
+    Ok(sessions)
 }
 
 pub fn get_sessions(conn: &Connection, limit: usize) -> Result<Vec<Session>> {
@@ -61,23 +73,14 @@ pub fn get_sessions(conn: &Connection, limit: usize) -> Result<Vec<Session>> {
          LIMIT ?1"
     )?;
 
-    let sessions = stmt.query_map([limit], |row| {
-        let id: i64 = row.get(0)?;
-        let topic: String = row.get(1)?;
-        let start_str: String = row.get(2)?;
-        let end_str: Option<String> = row.get(3)?;
-        Ok((id, topic, start_str, end_str))
-    })?;
+    let sessions = stmt
+        .query_map([limit], read_session_row)?
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .map(parse_session_row)
+        .collect::<Result<Vec<_>, _>>()?;
 
-    let mut result = Vec::new();
-    for session in sessions {
-        let (id, topic, start_str, end_str) = session?;
-        let start = DateTime::parse_from_rfc3339(&start_str)?;
-        let end = end_str.map(|s| DateTime::parse_from_rfc3339(&s)).transpose()?;
-        result.push(Session { id, topic, start, end });
-    }
-
-    Ok(result)
+    Ok(sessions)
 }
 
 pub fn get_all_sessions_for_export(conn: &Connection) -> Result<Vec<Session>> {
@@ -88,23 +91,14 @@ pub fn get_all_sessions_for_export(conn: &Connection) -> Result<Vec<Session>> {
          ORDER BY start_time ASC"
     )?;
 
-    let sessions = stmt.query_map([], |row| {
-        let id: i64 = row.get(0)?;
-        let topic: String = row.get(1)?;
-        let start_str: String = row.get(2)?;
-        let end_str: String = row.get(3)?;
-        Ok((id, topic, start_str, end_str))
-    })?;
+    let sessions = stmt
+        .query_map([], read_session_row)?
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .map(parse_session_row)
+        .collect::<Result<Vec<_>, _>>()?;
 
-    let mut result = Vec::new();
-    for session in sessions {
-        let (id, topic, start_str, end_str) = session?;
-        let start = DateTime::parse_from_rfc3339(&start_str)?;
-        let end = DateTime::parse_from_rfc3339(&end_str)?;
-        result.push(Session { id, topic, start, end: Some(end) });
-    }
-
-    Ok(result)
+    Ok(sessions)
 }
 
 fn topic_placeholders(topics: &[String]) -> String {
@@ -153,10 +147,7 @@ pub fn get_period_stats_by_topics(
         Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
     })?;
 
-    let mut result = Vec::new();
-    for row in rows {
-        result.push(row?);
-    }
+    let result = rows.collect::<Result<Vec<_>, _>>()?;
 
     Ok(result)
 }
@@ -179,10 +170,7 @@ pub fn get_all_topics(conn: &Connection) -> Result<Vec<(String, i64, f64)>> {
         Ok((topic, sessions, hours))
     })?;
 
-    let mut result = Vec::new();
-    for topic in topics {
-        result.push(topic?);
-    }
+    let result = topics.collect::<Result<Vec<_>, _>>()?;
 
     Ok(result)
 }
@@ -215,10 +203,7 @@ pub fn get_period_stats(
         |row| Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
     )?;
 
-    let mut result = Vec::new();
-    for topic in topics {
-        result.push(topic?);
-    }
+    let result = topics.collect::<Result<Vec<_>, _>>()?;
 
     Ok(result)
 }
@@ -364,24 +349,16 @@ pub fn get_sessions_with_calculated_hours(conn: &Connection, limit: usize) -> Re
          LIMIT ?1"
     )?;
 
-    let sessions = stmt.query_map([limit], |row| {
-        let id: i64 = row.get(0)?;
-        let topic: String = row.get(1)?;
-        let start_str: String = row.get(2)?;
-        let end_str: Option<String> = row.get(3)?;
-        let hours: f64 = row.get(4)?;
-        Ok((id, topic, start_str, end_str, hours))
-    })?;
+    let sessions = stmt
+        .query_map([limit], |row| {
+            Ok((read_session_row(row)?, row.get::<_, f64>(4)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .map(|(raw, hours)| parse_session_row(raw).map(|s| (s, hours)))
+        .collect::<Result<Vec<_>, _>>()?;
 
-    let mut result = Vec::new();
-    for session in sessions {
-        let (id, topic, start_str, end_str, hours) = session?;
-        let start = DateTime::parse_from_rfc3339(&start_str)?;
-        let end = end_str.map(|s| DateTime::parse_from_rfc3339(&s)).transpose()?;
-        result.push((Session { id, topic, start, end }, hours));
-    }
-
-    Ok(result)
+    Ok(sessions)
 }
 
 pub fn get_sessions_with_calculated_hours_by_topics(conn: &Connection, limit: usize, topics: &[String]) -> Result<Vec<(Session, f64)>> {
@@ -407,24 +384,16 @@ pub fn get_sessions_with_calculated_hours_by_topics(conn: &Connection, limit: us
     let mut params = topic_params(topics);
     params.push(&limit_i64);
 
-    let sessions = stmt.query_map(rusqlite::params_from_iter(params), |row| {
-        let id: i64 = row.get(0)?;
-        let topic: String = row.get(1)?;
-        let start_str: String = row.get(2)?;
-        let end_str: Option<String> = row.get(3)?;
-        let hours: f64 = row.get(4)?;
-        Ok((id, topic, start_str, end_str, hours))
-    })?;
+    let sessions = stmt
+        .query_map(rusqlite::params_from_iter(params), |row| {
+            Ok((read_session_row(row)?, row.get::<_, f64>(4)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .map(|(raw, hours)| parse_session_row(raw).map(|s| (s, hours)))
+        .collect::<Result<Vec<_>, _>>()?;
 
-    let mut result = Vec::new();
-    for session in sessions {
-        let (id, topic, start_str, end_str, hours) = session?;
-        let start = DateTime::parse_from_rfc3339(&start_str)?;
-        let end = end_str.map(|s| DateTime::parse_from_rfc3339(&s)).transpose()?;
-        result.push((Session { id, topic, start, end }, hours));
-    }
-
-    Ok(result)
+    Ok(sessions)
 }
 
 pub fn get_all_sessions_for_export_by_topics(conn: &Connection, topics: &[String]) -> Result<Vec<Session>> {
@@ -442,23 +411,14 @@ pub fn get_all_sessions_for_export_by_topics(conn: &Connection, topics: &[String
     );
     let mut stmt = conn.prepare(&query)?;
 
-    let sessions = stmt.query_map(rusqlite::params_from_iter(topic_params(topics)), |row| {
-        let id: i64 = row.get(0)?;
-        let topic: String = row.get(1)?;
-        let start_str: String = row.get(2)?;
-        let end_str: String = row.get(3)?;
-        Ok((id, topic, start_str, end_str))
-    })?;
+    let sessions = stmt
+        .query_map(rusqlite::params_from_iter(topic_params(topics)), read_session_row)?
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .map(parse_session_row)
+        .collect::<Result<Vec<_>, _>>()?;
 
-    let mut result = Vec::new();
-    for session in sessions {
-        let (id, topic, start_str, end_str) = session?;
-        let start = DateTime::parse_from_rfc3339(&start_str)?;
-        let end = DateTime::parse_from_rfc3339(&end_str)?;
-        result.push(Session { id, topic, start, end: Some(end) });
-    }
-
-    Ok(result)
+    Ok(sessions)
 }
 
 pub fn get_all_time_totals_by_topics(conn: &Connection, topics: &[String]) -> Result<Vec<(String, f64)>> {
@@ -480,10 +440,7 @@ pub fn get_all_time_totals_by_topics(conn: &Connection, topics: &[String]) -> Re
         Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
     })?;
 
-    let mut result = Vec::new();
-    for row in rows {
-        result.push(row?);
-    }
+    let result = rows.collect::<Result<Vec<_>, _>>()?;
     Ok(result)
 }
 
