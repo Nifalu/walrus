@@ -241,36 +241,36 @@ pub fn start_session(conn: &Connection, topic: &str) -> Result<bool> {
 /// Close the open session with the given id. Sessions shorter than
 /// MIN_SESSION_SECS are deleted instead of being saved with a tiny duration.
 pub fn stop_session(conn: &Connection, id: i64) -> Result<StopOutcome> {
-    let now = Local::now().to_rfc3339();
-    // ?1 appears twice: SQLite numbered parameters are reused, so the same
-    // 'now' timestamp decides the duration and becomes the end_time.
-    let dropped = conn.execute(
-        "DELETE FROM sessions
-         WHERE id = ?1 AND end_time IS NULL
-           AND (julianday(?2) - julianday(start_time)) * 86400.0 < ?3",
-        rusqlite::params![id, now, MIN_SESSION_SECS],
-    )?;
-    let stopped = conn.execute(
-        "UPDATE sessions SET end_time = ?1 WHERE id = ?2 AND end_time IS NULL",
-        [&now, &id.to_string()],
-    )?;
-    Ok(StopOutcome { stopped, dropped })
+    stop_open_sessions(conn, "id", &id)
 }
 
 /// Close every open session of a topic (idempotent), so duplicate open rows
 /// cannot survive a stop. Sessions shorter than MIN_SESSION_SECS are deleted
 /// instead of being saved with a tiny duration.
 pub fn stop_all_open_sessions(conn: &Connection, topic: &str) -> Result<StopOutcome> {
+    stop_open_sessions(conn, "topic", &topic)
+}
+
+/// Shared stop implementation: delete open matching sessions shorter than
+/// MIN_SESSION_SECS, then close the rest. `column` is a fixed column name
+/// ("id" or "topic"), never user input.
+fn stop_open_sessions(conn: &Connection, column: &str, value: &dyn ToSql) -> Result<StopOutcome> {
     let now = Local::now().to_rfc3339();
+    // ?2 appears twice: SQLite numbered parameters are reused, so the same
+    // 'now' timestamp decides the duration and becomes the end_time.
     let dropped = conn.execute(
-        "DELETE FROM sessions
-         WHERE topic = ?1 AND end_time IS NULL
-           AND (julianday(?2) - julianday(start_time)) * 86400.0 < ?3",
-        rusqlite::params![topic, now, MIN_SESSION_SECS],
+        &format!(
+            "DELETE FROM sessions
+             WHERE {column} = ?1 AND end_time IS NULL
+               AND (julianday(?2) - julianday(start_time)) * 86400.0 < ?3"
+        ),
+        rusqlite::params![value, now, MIN_SESSION_SECS],
     )?;
     let stopped = conn.execute(
-        "UPDATE sessions SET end_time = ?1 WHERE topic = ?2 AND end_time IS NULL",
-        rusqlite::params![now, topic],
+        &format!(
+            "UPDATE sessions SET end_time = ?1 WHERE {column} = ?2 AND end_time IS NULL"
+        ),
+        rusqlite::params![now, value],
     )?;
     Ok(StopOutcome { stopped, dropped })
 }
@@ -386,7 +386,7 @@ mod tests {
     }
 
     #[test]
-    fn get_period_stats_by_topics_filters_multiple_topics() {
+    fn get_period_stats_filters_multiple_topics() {
         let conn = setup_conn();
         let s1 = Local.with_ymd_and_hms(2026, 10, 1, 9, 0, 0).single().unwrap();
         let e1 = Local.with_ymd_and_hms(2026, 10, 1, 10, 0, 0).single().unwrap();
