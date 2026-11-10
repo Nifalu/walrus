@@ -2,7 +2,7 @@ use rusqlite::Connection;
 use anyhow::Result;
 use chrono::{Local, NaiveDate, Duration, Datelike, TimeZone};
 use crate::{queries, display};
-use crate::Period;
+use crate::cli::Period;
 
 pub fn start(conn: &Connection, topic: Option<String>) -> Result<()> {
     let topic_value = topic.as_deref().unwrap_or("default");
