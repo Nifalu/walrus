@@ -43,7 +43,7 @@ pub fn stop(conn: &Connection) -> Result<()> {
         }
 
         println!("Stopped tracking");
-        let sessions = queries::get_sessions(conn, 1)?;
+        let sessions = queries::get_sessions(conn, 1, &[])?;
         display::print_sessions(&sessions, false);
 
         Ok(())
@@ -66,7 +66,7 @@ pub fn stop_topic(conn: &Connection, topic: &str) -> Result<()> {
     if outcome.dropped > 0 {
         println!("(dropped {} session{} under 1 minute)", outcome.dropped, if outcome.dropped > 1 { "s" } else { "" });
     }
-    let sessions = queries::get_sessions(conn, 1)?;
+    let sessions = queries::get_sessions(conn, 1, &[])?;
     display::print_sessions(&sessions, false);
 
     Ok(())
@@ -84,10 +84,10 @@ pub fn show(conn: &Connection, count: usize, period: Option<Period>, topic: Vec<
         Some(Period::Year) => show_years(conn, count, &topic)?,
         None => {
             if topic.is_empty() {
-                let sessions = queries::get_sessions(conn, count)?;
+                let sessions = queries::get_sessions(conn, count, &topic)?;
                 display::print_sessions(&sessions, false);
             } else {
-                let totals = queries::get_all_time_totals_by_topics(conn, &topic)?;
+                let totals = queries::get_all_time_totals(conn, &topic)?;
                 let grand_total: f64 = totals.iter().map(|(_, h)| *h).sum();
                 println!("\nAll time");
                 for (topic_name, hours) in totals {
@@ -171,7 +171,7 @@ pub fn drop_topic(conn: &Connection, topic: &str) -> Result<()> {
 }
 
 pub fn export(conn: &Connection, topic_filter: Vec<String>, period: Option<Period>) -> Result<()> {
-    let sessions = queries::get_all_sessions_for_export_by_topics(conn, &topic_filter)?;
+    let sessions = queries::get_all_sessions_for_export(conn, &topic_filter)?;
 
     let timestamp = Local::now().format("%Y%m%d_%H%M%S");
     let filename = format!("walrus_export_{}.csv", timestamp);
@@ -304,11 +304,7 @@ fn show_days(conn: &Connection, count: usize, topics: &[String]) -> Result<()> {
             day_start.format("%A, %d.%m.%Y").to_string()
         };
 
-        let topics = if topics.is_empty() {
-            queries::get_period_stats(conn, day_start, day_end)?
-        } else {
-            queries::get_period_stats_by_topics(conn, day_start, day_end, topics)?
-        };
+        let topics = queries::get_period_stats(conn, day_start, day_end, topics)?;
         periods.push(queries::PeriodStats { label, topics });
     }
 
@@ -338,11 +334,7 @@ fn show_weeks(conn: &Connection, count: usize, topics: &[String]) -> Result<()> 
                             week_end.format("%d.%m.%Y")
         );
 
-        let topics = if topics.is_empty() {
-            queries::get_period_stats(conn, week_start, week_end)?
-        } else {
-            queries::get_period_stats_by_topics(conn, week_start, week_end, topics)?
-        };
+        let topics = queries::get_period_stats(conn, week_start, week_end, topics)?;
         periods.push(queries::PeriodStats { label, topics });
     }
 
@@ -379,11 +371,7 @@ fn show_months(conn: &Connection, count: usize, topics: &[String]) -> Result<()>
         };
 
         let label = target_date.format("%B %Y").to_string();
-        let topics = if topics.is_empty() {
-            queries::get_period_stats(conn, start, end)?
-        } else {
-            queries::get_period_stats_by_topics(conn, start, end, topics)?
-        };
+        let topics = queries::get_period_stats(conn, start, end, topics)?;
         periods.push(queries::PeriodStats { label, topics });
     }
 
@@ -414,11 +402,7 @@ fn show_years(conn: &Connection, count: usize, topics: &[String]) -> Result<()> 
         };
 
         let label = format!("{}", target_year);
-        let topics = if topics.is_empty() {
-            queries::get_period_stats(conn, start, end)?
-        } else {
-            queries::get_period_stats_by_topics(conn, start, end, topics)?
-        };
+        let topics = queries::get_period_stats(conn, start, end, topics)?;
         periods.push(queries::PeriodStats { label, topics });
     }
 

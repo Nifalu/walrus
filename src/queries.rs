@@ -65,16 +65,30 @@ pub fn get_active_sessions(conn: &Connection) -> Result<Vec<Session>> {
     Ok(sessions)
 }
 
-pub fn get_sessions(conn: &Connection, limit: usize) -> Result<Vec<Session>> {
-    let mut stmt = conn.prepare(
+/// Sessions with the most recent starts first, at most `limit` of them.
+/// An empty `topics` slice means no topic filter.
+pub fn get_sessions(conn: &Connection, limit: usize, topics: &[String]) -> Result<Vec<Session>> {
+    let topic_clause = if topics.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE topic IN ({})", topic_placeholders(topics))
+    };
+    let limit_idx = topics.len() + 1;
+
+    let mut stmt = conn.prepare(&format!(
         "SELECT id, topic, start_time, end_time
          FROM sessions
+         {topic_clause}
          ORDER BY start_time DESC
-         LIMIT ?1"
-    )?;
+         LIMIT ?{limit_idx}"
+    ))?;
+
+    let limit_i64 = limit as i64;
+    let mut params = topic_params(topics);
+    params.push(&limit_i64);
 
     let sessions = stmt
-        .query_map([limit], read_session_row)?
+        .query_map(rusqlite::params_from_iter(params), read_session_row)?
         .collect::<Result<Vec<_>, _>>()?
         .into_iter()
         .map(parse_session_row)
@@ -83,16 +97,24 @@ pub fn get_sessions(conn: &Connection, limit: usize) -> Result<Vec<Session>> {
     Ok(sessions)
 }
 
-pub fn get_all_sessions_for_export(conn: &Connection) -> Result<Vec<Session>> {
-    let mut stmt = conn.prepare(
+/// Finished sessions oldest first, for CSV export. An empty `topics` slice
+/// means no topic filter.
+pub fn get_all_sessions_for_export(conn: &Connection, topics: &[String]) -> Result<Vec<Session>> {
+    let topic_clause = if topics.is_empty() {
+        String::new()
+    } else {
+        format!(" AND topic IN ({})", topic_placeholders(topics))
+    };
+
+    let mut stmt = conn.prepare(&format!(
         "SELECT id, topic, start_time, end_time
          FROM sessions
-         WHERE end_time IS NOT NULL
+         WHERE end_time IS NOT NULL{topic_clause}
          ORDER BY start_time ASC"
-    )?;
+    ))?;
 
     let sessions = stmt
-        .query_map([], read_session_row)?
+        .query_map(rusqlite::params_from_iter(topic_params(topics)), read_session_row)?
         .collect::<Result<Vec<_>, _>>()?
         .into_iter()
         .map(parse_session_row)
@@ -109,37 +131,41 @@ fn topic_params<'a>(topics: &'a [String]) -> Vec<&'a dyn ToSql> {
     topics.iter().map(|topic| topic as &dyn ToSql).collect()
 }
 
-pub fn get_period_stats_by_topics(
+/// Convert a naive local datetime to an RFC 3339 string for SQL string
+/// comparisons. Errors on DST-gap or ambiguous local times.
+fn local_to_rfc3339(dt: NaiveDateTime, what: &str) -> Result<String> {
+    let local = Local.from_local_datetime(&dt).single()
+        .ok_or_else(|| anyhow::anyhow!("Ambiguous {} datetime", what))?;
+    Ok(local.to_rfc3339())
+}
+
+/// Hours per topic for sessions starting in [start, end), most time first.
+/// An empty `topics` slice means no topic filter.
+pub fn get_period_stats(
     conn: &Connection,
     start: NaiveDateTime,
     end: NaiveDateTime,
     topics: &[String],
 ) -> Result<Vec<(String, f64)>> {
-    if topics.is_empty() {
-        return Ok(Vec::new());
-    }
+    let start_rfc3339 = local_to_rfc3339(start, "start")?;
+    let end_rfc3339 = local_to_rfc3339(end, "end")?;
 
-    let start_dt = Local.from_local_datetime(&start).single()
-        .ok_or_else(|| anyhow::anyhow!("Ambiguous start datetime"))?;
-    let end_dt = Local.from_local_datetime(&end).single()
-        .ok_or_else(|| anyhow::anyhow!("Ambiguous end datetime"))?;
+    let topic_clause = if topics.is_empty() {
+        String::new()
+    } else {
+        format!(" AND topic IN ({})", topic_placeholders(topics))
+    };
 
-    let start_rfc3339 = start_dt.to_rfc3339();
-    let end_rfc3339 = end_dt.to_rfc3339();
-
-    let query = format!(
+    let mut stmt = conn.prepare(&format!(
         "SELECT topic, SUM((julianday(end_time) - julianday(start_time)) * 24) as hours
          FROM sessions
          WHERE end_time IS NOT NULL
            AND start_time >= ?1
-           AND start_time < ?2
-           AND topic IN ({})
+           AND start_time < ?2{topic_clause}
          GROUP BY topic
-         ORDER BY hours DESC",
-        topic_placeholders(topics)
-    );
+         ORDER BY hours DESC"
+    ))?;
 
-    let mut stmt = conn.prepare(&query)?;
     let mut params: Vec<&dyn ToSql> = vec![&start_rfc3339, &end_rfc3339];
     params.extend(topic_params(topics));
 
@@ -169,39 +195,6 @@ pub fn get_all_topics(conn: &Connection) -> Result<Vec<(String, i64, f64)>> {
         let hours: f64 = row.get(2)?;
         Ok((topic, sessions, hours))
     })?;
-
-    let result = topics.collect::<Result<Vec<_>, _>>()?;
-
-    Ok(result)
-}
-
-pub fn get_period_stats(
-    conn: &Connection,
-    start: NaiveDateTime,
-    end: NaiveDateTime,
-) -> Result<Vec<(String, f64)>> {
-    let start_dt = Local.from_local_datetime(&start).single()
-        .ok_or_else(|| anyhow::anyhow!("Ambiguous start datetime"))?;
-    let end_dt = Local.from_local_datetime(&end).single()
-        .ok_or_else(|| anyhow::anyhow!("Ambiguous end datetime"))?;
-
-    let start_rfc3339 = start_dt.to_rfc3339();
-    let end_rfc3339 = end_dt.to_rfc3339();
-
-    let mut stmt = conn.prepare(
-        "SELECT topic, SUM((julianday(end_time) - julianday(start_time)) * 24) as hours
-         FROM sessions
-         WHERE end_time IS NOT NULL
-           AND start_time >= ?1
-           AND start_time < ?2
-         GROUP BY topic
-         ORDER BY hours DESC"
-    )?;
-
-    let topics = stmt.query_map(
-        rusqlite::params![start_rfc3339, end_rfc3339],
-        |row| Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
-    )?;
 
     let result = topics.collect::<Result<Vec<_>, _>>()?;
 
@@ -396,44 +389,21 @@ pub fn get_sessions_with_calculated_hours_by_topics(conn: &Connection, limit: us
     Ok(sessions)
 }
 
-pub fn get_all_sessions_for_export_by_topics(conn: &Connection, topics: &[String]) -> Result<Vec<Session>> {
-    if topics.is_empty() {
-        return get_all_sessions_for_export(conn);
-    }
-
-    let query = format!(
-        "SELECT id, topic, start_time, end_time
-         FROM sessions
-         WHERE end_time IS NOT NULL
-           AND topic IN ({})
-         ORDER BY start_time ASC",
-        topic_placeholders(topics)
-    );
-    let mut stmt = conn.prepare(&query)?;
-
-    let sessions = stmt
-        .query_map(rusqlite::params_from_iter(topic_params(topics)), read_session_row)?
-        .collect::<Result<Vec<_>, _>>()?
-        .into_iter()
-        .map(parse_session_row)
-        .collect::<Result<Vec<_>, _>>()?;
-
-    Ok(sessions)
-}
-
-pub fn get_all_time_totals_by_topics(conn: &Connection, topics: &[String]) -> Result<Vec<(String, f64)>> {
-    if topics.is_empty() {
-        return Ok(Vec::new());
-    }
+/// Total finished hours per topic, most time first. An empty `topics`
+/// slice means no topic filter.
+pub fn get_all_time_totals(conn: &Connection, topics: &[String]) -> Result<Vec<(String, f64)>> {
+    let topic_clause = if topics.is_empty() {
+        String::new()
+    } else {
+        format!(" AND topic IN ({})", topic_placeholders(topics))
+    };
 
     let query = format!(
         "SELECT topic, SUM((julianday(end_time) - julianday(start_time)) * 24) as hours
          FROM sessions
-         WHERE end_time IS NOT NULL
-           AND topic IN ({})
+         WHERE end_time IS NOT NULL{topic_clause}
          GROUP BY topic
-         ORDER BY hours DESC",
-        topic_placeholders(topics)
+         ORDER BY hours DESC"
     );
     let mut stmt = conn.prepare(&query)?;
     let rows = stmt.query_map(rusqlite::params_from_iter(topic_params(topics)), |row| {
@@ -488,10 +458,35 @@ mod tests {
         let end = NaiveDate::from_ymd_opt(2026, 10, 2).unwrap().and_hms_opt(0, 0, 0).unwrap();
         let topics = vec!["cvlt".to_string(), "home".to_string()];
 
-        let stats = get_period_stats_by_topics(&conn, start, end, &topics).unwrap();
+        let stats = get_period_stats(&conn, start, end, &topics).unwrap();
 
         assert_eq!(stats.len(), 2);
         assert!(stats.iter().all(|(topic, _)| topic == "cvlt" || topic == "home"));
+    }
+
+    #[test]
+    fn get_period_stats_with_empty_topics_returns_all_topics() {
+        let conn = setup_conn();
+        let s1 = Local.with_ymd_and_hms(2026, 10, 1, 9, 0, 0).single().unwrap();
+        let e1 = Local.with_ymd_and_hms(2026, 10, 1, 10, 0, 0).single().unwrap();
+        let s2 = Local.with_ymd_and_hms(2026, 10, 1, 10, 0, 0).single().unwrap();
+        let e2 = Local.with_ymd_and_hms(2026, 10, 1, 12, 0, 0).single().unwrap();
+        conn.execute(
+            "INSERT INTO sessions (topic, start_time, end_time) VALUES (?1, ?2, ?3), (?4, ?5, ?6)",
+            rusqlite::params![
+                "cvlt", s1.to_rfc3339(), e1.to_rfc3339(),
+                "work", s2.to_rfc3339(), e2.to_rfc3339(),
+            ],
+        ).unwrap();
+
+        let start = NaiveDate::from_ymd_opt(2026, 10, 1).unwrap().and_hms_opt(0, 0, 0).unwrap();
+        let end = NaiveDate::from_ymd_opt(2026, 10, 2).unwrap().and_hms_opt(0, 0, 0).unwrap();
+
+        // Empty filter must behave like "no filter", not "match nothing".
+        let stats = get_period_stats(&conn, start, end, &[]).unwrap();
+
+        assert_eq!(stats.len(), 2);
+        assert!(stats.iter().all(|(topic, _)| topic == "cvlt" || topic == "work"));
     }
 
     #[test]
