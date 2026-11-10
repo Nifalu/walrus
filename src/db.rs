@@ -1,20 +1,22 @@
-use rusqlite::{Connection, Result};
+use anyhow::Result;
+use rusqlite::Connection;
 use std::path::PathBuf;
 use std::time::Duration;
 
-pub fn get_db_path() -> PathBuf {
+pub fn get_db_path() -> Result<PathBuf> {
     let data_dir = dirs::data_local_dir()
-        .expect("Could not find local data directory")
+        .ok_or_else(|| anyhow::anyhow!("Could not find local data directory"))?
         .join("walrus");
 
     // Create directory if it doesn't exist
-    std::fs::create_dir_all(&data_dir).expect("Could not create data directory");
+    std::fs::create_dir_all(&data_dir)
+        .map_err(|e| anyhow::anyhow!("Could not create data directory: {}", e))?;
 
-    data_dir.join("walrus.db")
+    Ok(data_dir.join("walrus.db"))
 }
 
 pub fn init_db() -> Result<Connection> {
-    let db_path = get_db_path();
+    let db_path = get_db_path()?;
     let is_new = !db_path.exists();
 
     let conn = Connection::open(&db_path)?;
