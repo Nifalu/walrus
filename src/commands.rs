@@ -115,19 +115,24 @@ pub fn topics(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-pub fn reset(conn: &Connection) -> Result<()> {
+/// Prompt the user to type 'confirm'; returns true if they did.
+fn confirm() -> Result<bool> {
     use std::io::{self, Write};
 
-    println!("WARNING: This will delete ALL your time tracking data!");
-    println!("This action cannot be undone.");
     print!("Type 'confirm' to proceed: ");
     io::stdout().flush()?;
 
     let mut input = String::new();
     io::stdin().read_line(&mut input)?;
-    let input = input.trim();
 
-    if input != "confirm" {
+    Ok(input.trim() == "confirm")
+}
+
+pub fn reset(conn: &Connection) -> Result<()> {
+    println!("WARNING: This will delete ALL your time tracking data!");
+    println!("This action cannot be undone.");
+
+    if !confirm()? {
         println!("Reset cancelled");
         return Ok(());
     }
@@ -146,21 +151,14 @@ pub fn drop(conn: &Connection, id: i64) -> Result<()> {
 }
 
 pub fn drop_topic(conn: &Connection, topic: &str) -> Result<()> {
-    use std::io::{self, Write};
-
     let count = queries::count_sessions_by_topic(conn, topic)?;
     if count == 0 {
         anyhow::bail!("No sessions found for topic '{}'", topic);
     }
 
     println!("This will delete {} session(s) for topic '{}'.", count, topic);
-    print!("Type 'confirm' to proceed: ");
-    io::stdout().flush()?;
 
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-
-    if input.trim() != "confirm" {
+    if !confirm()? {
         println!("Cancelled");
         return Ok(());
     }
