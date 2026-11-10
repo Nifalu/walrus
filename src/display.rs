@@ -27,51 +27,8 @@ pub fn print_sessions(sessions: &[Session], show_id: bool) {
 
     for session in sessions {
         if let Some(end) = session.end {
-            let duration = end.signed_duration_since(session.start);
-            let hours = duration.num_seconds() as f64 / 3600.0;
+            let hours = session.hours();
 
-            if show_id {
-                println!(
-                    "{:<5} {:<20} {:<20} {:<20} {:>9.2}h",
-                    session.id, session.topic,
-                    session.start.format("%d.%m.%Y %H:%M"),
-                    end.format("%d.%m.%Y %H:%M"),
-                    hours
-                );
-            } else {
-                println!(
-                    "{:<20} {:<20} {:<20} {:>9.2}h",
-                    session.topic,
-                    session.start.format("%d.%m.%Y %H:%M"),
-                    end.format("%d.%m.%Y %H:%M"),
-                    hours
-                );
-            }
-        } else if show_id {
-            println!(
-                "{:<5} {:<20} {:<20} {:<20} {:>10}",
-                session.id, session.topic,
-                session.start.format("%d.%m.%Y %H:%M"),
-                "ACTIVE",
-                "-"
-            );
-        }
-    }
-
-    println!();
-}
-
-pub fn print_sessions_with_hours(sessions_with_hours: &[(Session, f64)], show_id: bool) {
-    if show_id {
-        println!("\n{:<5} {:<20} {:<20} {:<20} {:>10}", "ID", "Topic", "Start", "End", "Hours");
-        println!("{}", "─".repeat(80));
-    } else {
-        println!("\n{:<20} {:<20} {:<20} {:>10}", "Topic", "Start", "End", "Hours");
-        println!("{}", "─".repeat(75));
-    }
-
-    for (session, hours) in sessions_with_hours {
-        if let Some(end) = session.end {
             if show_id {
                 println!(
                     "{:<5} {:<20} {:<20} {:<20} {:>9.2}h",

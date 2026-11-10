@@ -104,8 +104,8 @@ pub fn show(conn: &Connection, count: usize, period: Option<Period>, topic: Vec<
 }
 
 pub fn list(conn: &Connection, count: usize, topic: Vec<String>) -> Result<()> {
-    let sessions_with_hours = queries::get_sessions_with_calculated_hours_by_topics(conn, count, &topic)?;
-    display::print_sessions_with_hours(&sessions_with_hours, true);
+    let sessions = queries::get_sessions(conn, count, &topic)?;
+    display::print_sessions(&sessions, true);
     Ok(())
 }
 

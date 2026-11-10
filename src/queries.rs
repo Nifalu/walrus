@@ -9,6 +9,16 @@ pub struct Session {
     pub end: Option<DateTime<chrono::FixedOffset>>,
 }
 
+impl Session {
+    /// Finished duration in hours; 0.0 while the session is open.
+    pub fn hours(&self) -> f64 {
+        match self.end {
+            Some(end) => end.signed_duration_since(self.start).num_seconds() as f64 / 3600.0,
+            None => 0.0,
+        }
+    }
+}
+
 pub struct PeriodStats {
     pub label: String,
     pub topics: Vec<(String, f64)>,
@@ -331,64 +341,6 @@ pub fn parse_datetime(s: &str) -> Result<String> {
     Ok(local_dt.to_rfc3339())
 }
 
-pub fn get_sessions_with_calculated_hours(conn: &Connection, limit: usize) -> Result<Vec<(Session, f64)>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, topic, start_time, end_time,
-                CASE WHEN end_time IS NOT NULL
-                     THEN (julianday(end_time) - julianday(start_time)) * 24
-                     ELSE 0.0 END as hours
-         FROM sessions
-         ORDER BY start_time DESC
-         LIMIT ?1"
-    )?;
-
-    let sessions = stmt
-        .query_map([limit], |row| {
-            Ok((read_session_row(row)?, row.get::<_, f64>(4)?))
-        })?
-        .collect::<Result<Vec<_>, _>>()?
-        .into_iter()
-        .map(|(raw, hours)| parse_session_row(raw).map(|s| (s, hours)))
-        .collect::<Result<Vec<_>, _>>()?;
-
-    Ok(sessions)
-}
-
-pub fn get_sessions_with_calculated_hours_by_topics(conn: &Connection, limit: usize, topics: &[String]) -> Result<Vec<(Session, f64)>> {
-    if topics.is_empty() {
-        return get_sessions_with_calculated_hours(conn, limit);
-    }
-
-    let query = format!(
-        "SELECT id, topic, start_time, end_time,
-                CASE WHEN end_time IS NOT NULL
-                     THEN (julianday(end_time) - julianday(start_time)) * 24
-                     ELSE 0.0 END as hours
-         FROM sessions
-         WHERE topic IN ({})
-         ORDER BY start_time DESC
-         LIMIT ?{}",
-        topic_placeholders(topics),
-        topics.len() + 1
-    );
-
-    let mut stmt = conn.prepare(&query)?;
-    let limit_i64 = limit as i64;
-    let mut params = topic_params(topics);
-    params.push(&limit_i64);
-
-    let sessions = stmt
-        .query_map(rusqlite::params_from_iter(params), |row| {
-            Ok((read_session_row(row)?, row.get::<_, f64>(4)?))
-        })?
-        .collect::<Result<Vec<_>, _>>()?
-        .into_iter()
-        .map(|(raw, hours)| parse_session_row(raw).map(|s| (s, hours)))
-        .collect::<Result<Vec<_>, _>>()?;
-
-    Ok(sessions)
-}
-
 /// Total finished hours per topic, most time first. An empty `topics`
 /// slice means no topic filter.
 pub fn get_all_time_totals(conn: &Connection, topics: &[String]) -> Result<Vec<(String, f64)>> {
@@ -490,7 +442,7 @@ mod tests {
     }
 
     #[test]
-    fn get_sessions_with_calculated_hours_by_topics_filters_multiple_topics() {
+    fn get_sessions_filters_multiple_topics() {
         let conn = setup_conn();
         let s1 = Local.with_ymd_and_hms(2026, 10, 1, 9, 0, 0).single().unwrap();
         let e1 = Local.with_ymd_and_hms(2026, 10, 1, 10, 0, 0).single().unwrap();
@@ -511,9 +463,9 @@ mod tests {
         ).unwrap();
 
         let topics = vec!["cvlt".to_string(), "home".to_string()];
-        let sessions = get_sessions_with_calculated_hours_by_topics(&conn, 10, &topics).unwrap();
+        let sessions = get_sessions(&conn, 10, &topics).unwrap();
 
         assert_eq!(sessions.len(), 2);
-        assert!(sessions.iter().all(|(session, _)| session.topic == "cvlt" || session.topic == "home"));
+        assert!(sessions.iter().all(|session| session.topic == "cvlt" || session.topic == "home"));
     }
 }
