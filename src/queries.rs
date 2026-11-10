@@ -14,6 +14,23 @@ pub struct PeriodStats {
     pub topics: Vec<(String, f64)>,
 }
 
+/// Sessions shorter than this are dropped entirely when stopped.
+const MIN_SESSION_SECS: f64 = 60.0;
+
+/// Result of a stop operation: how many sessions were closed normally
+/// (end_time set) and how many were dropped for being under one minute.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct StopOutcome {
+    pub stopped: usize,
+    pub dropped: usize,
+}
+
+impl StopOutcome {
+    pub fn total(&self) -> usize {
+        self.stopped + self.dropped
+    }
+}
+
 pub fn get_active_sessions(conn: &Connection) -> Result<Vec<Session>> {
     let mut stmt = conn.prepare(
         "SELECT id, topic, start_time FROM sessions WHERE end_time IS NULL ORDER BY start_time DESC"
@@ -233,24 +250,41 @@ pub fn start_session(conn: &Connection, topic: &str) -> Result<bool> {
     Ok(inserted > 0)
 }
 
-pub fn stop_session(conn: &Connection, id: i64) -> Result<()> {
+/// Close the open session with the given id. Sessions shorter than
+/// MIN_SESSION_SECS are deleted instead of being saved with a tiny duration.
+pub fn stop_session(conn: &Connection, id: i64) -> Result<StopOutcome> {
     let now = Local::now().to_rfc3339();
-    conn.execute(
-        "UPDATE sessions SET end_time = ?1 WHERE id = ?2",
+    // ?1 appears twice: SQLite numbered parameters are reused, so the same
+    // 'now' timestamp decides the duration and becomes the end_time.
+    let dropped = conn.execute(
+        "DELETE FROM sessions
+         WHERE id = ?1 AND end_time IS NULL
+           AND (julianday(?2) - julianday(start_time)) * 86400.0 < ?3",
+        rusqlite::params![id, now, MIN_SESSION_SECS],
+    )?;
+    let stopped = conn.execute(
+        "UPDATE sessions SET end_time = ?1 WHERE id = ?2 AND end_time IS NULL",
         [&now, &id.to_string()],
     )?;
-    Ok(())
+    Ok(StopOutcome { stopped, dropped })
 }
 
 /// Close every open session of a topic (idempotent), so duplicate open rows
-/// cannot survive a stop. Returns how many sessions were closed.
-pub fn stop_all_open_sessions(conn: &Connection, topic: &str) -> Result<usize> {
+/// cannot survive a stop. Sessions shorter than MIN_SESSION_SECS are deleted
+/// instead of being saved with a tiny duration.
+pub fn stop_all_open_sessions(conn: &Connection, topic: &str) -> Result<StopOutcome> {
     let now = Local::now().to_rfc3339();
+    let dropped = conn.execute(
+        "DELETE FROM sessions
+         WHERE topic = ?1 AND end_time IS NULL
+           AND (julianday(?2) - julianday(start_time)) * 86400.0 < ?3",
+        rusqlite::params![topic, now, MIN_SESSION_SECS],
+    )?;
     let stopped = conn.execute(
         "UPDATE sessions SET end_time = ?1 WHERE topic = ?2 AND end_time IS NULL",
         rusqlite::params![now, topic],
     )?;
-    Ok(stopped)
+    Ok(StopOutcome { stopped, dropped })
 }
 
 pub fn delete_all_sessions(conn: &Connection) -> Result<()> {

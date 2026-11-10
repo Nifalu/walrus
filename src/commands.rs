@@ -35,7 +35,12 @@ pub fn stop(conn: &Connection) -> Result<()> {
         anyhow::bail!("Please specify which session to stop using: walrus stop <topic>");
     } else {
         // Exactly one active session - stop it
-        queries::stop_session(conn, active_sessions[0].id)?;
+        let outcome = queries::stop_session(conn, active_sessions[0].id)?;
+
+        if outcome.dropped > 0 {
+            println!("Session under 1 minute - dropped");
+            return Ok(());
+        }
 
         println!("Stopped tracking");
         let sessions = queries::get_sessions(conn, 1)?;
@@ -48,15 +53,18 @@ pub fn stop(conn: &Connection) -> Result<()> {
 pub fn stop_topic(conn: &Connection, topic: &str) -> Result<()> {
     // Close ALL open sessions of the topic: duplicates from earlier races or
     // manual starts must not survive a stop.
-    let stopped = queries::stop_all_open_sessions(conn, topic)?;
+    let outcome = queries::stop_all_open_sessions(conn, topic)?;
 
-    if stopped == 0 {
+    if outcome.total() == 0 {
         anyhow::bail!("No active session for '{}' to stop", topic);
     }
 
     println!("Stopped tracking");
-    if stopped > 1 {
-        println!("({} sessions)", stopped);
+    if outcome.stopped > 1 {
+        println!("({} sessions)", outcome.stopped);
+    }
+    if outcome.dropped > 0 {
+        println!("(dropped {} session{} under 1 minute)", outcome.dropped, if outcome.dropped > 1 { "s" } else { "" });
     }
     let sessions = queries::get_sessions(conn, 1)?;
     display::print_sessions(&sessions, false);
