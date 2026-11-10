@@ -8,7 +8,7 @@ pub struct Cli {
     pub command: Commands,
 }
 
-#[derive(Clone, ValueEnum)]
+#[derive(Clone, Copy, ValueEnum)]
 pub enum Period {
     Day,
     Week,

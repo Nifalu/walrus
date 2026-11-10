@@ -1,6 +1,6 @@
 use rusqlite::Connection;
 use anyhow::Result;
-use chrono::{Local, NaiveDate, Duration, Datelike, TimeZone};
+use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, NaiveDateTime, TimeZone};
 use crate::{queries, display};
 use crate::cli::Period;
 
@@ -78,10 +78,7 @@ pub fn show(conn: &Connection, count: usize, period: Option<Period>, topic: Vec<
     display::print_active_sessions(&queries::get_active_sessions(conn)?);
 
     match period {
-        Some(Period::Day) => show_days(conn, count, &topic)?,
-        Some(Period::Week) => show_weeks(conn, count, &topic)?,
-        Some(Period::Month) => show_months(conn, count, &topic)?,
-        Some(Period::Year) => show_years(conn, count, &topic)?,
+        Some(period) => show_periods(conn, count, &topic, period)?,
         None => {
             if topic.is_empty() {
                 let sessions = queries::get_sessions(conn, count, &topic)?;
@@ -179,7 +176,7 @@ pub fn export(conn: &Connection, topic_filter: Vec<String>, period: Option<Perio
 
     writeln!(writer, "start,end,duration (hours),topic")?;
 
-    let range = period.as_ref().map(|p| compute_period_range(p));
+    let range = period.map(compute_period_range).transpose()?;
 
     for session in sessions {
         if let Some(end) = session.end {
@@ -207,34 +204,22 @@ pub fn export(conn: &Connection, topic_filter: Vec<String>, period: Option<Perio
     Ok(())
 }
 
-fn compute_period_range(period: &Period) -> (chrono::DateTime<chrono::FixedOffset>, chrono::DateTime<chrono::FixedOffset>) {
+/// Bounds of the current `period` for export filtering. Export filters rows
+/// in Rust rather than in SQL (unlike show, whose period queries filter in
+/// get_period_stats); the bounds are the same ones show_periods uses for
+/// i = 0. Returns aware datetimes for direct comparison with Session
+/// timestamps, erroring on DST-gap or ambiguous local times instead of
+/// panicking.
+fn compute_period_range(period: Period) -> Result<(chrono::DateTime<chrono::FixedOffset>, chrono::DateTime<chrono::FixedOffset>)> {
     let now = Local::now();
-    match period {
-        Period::Day => {
-            let start = now.date_naive().and_hms_opt(0, 0, 0).unwrap();
-            let start_dt = Local.from_local_datetime(&start).single().unwrap();
-            (start_dt.into(), now.into())
-        }
-        Period::Week => {
-            let days_back = now.weekday().num_days_from_monday() as i64;
-            let start = (now - Duration::days(days_back))
-                .date_naive()
-                .and_hms_opt(0, 0, 0)
-                .unwrap();
-            let start_dt = Local.from_local_datetime(&start).single().unwrap();
-            (start_dt.into(), now.into())
-        }
-        Period::Month => {
-            let start = now.date_naive().with_day(1).unwrap().and_hms_opt(0, 0, 0).unwrap();
-            let start_dt = Local.from_local_datetime(&start).single().unwrap();
-            (start_dt.into(), now.into())
-        }
-        Period::Year => {
-            let start = NaiveDate::from_ymd_opt(now.year(), 1, 1).unwrap().and_hms_opt(0, 0, 0).unwrap();
-            let start_dt = Local.from_local_datetime(&start).single().unwrap();
-            (start_dt.into(), now.into())
-        }
-    }
+    let (_, start, _) = period_bounds(period, &now, 0);
+
+    let start = Local
+        .from_local_datetime(&start)
+        .single()
+        .ok_or_else(|| anyhow::anyhow!("Ambiguous start datetime"))?;
+
+    Ok((start.into(), now.into()))
 }
 
 pub fn add(conn: &Connection, topic: String, start: String, end: String) -> Result<()> {
@@ -285,97 +270,13 @@ pub fn edit(conn: &Connection, id: i64, topic: Option<String>, start: Option<Str
     Ok(())
 }
 
-fn show_days(conn: &Connection, count: usize, topics: &[String]) -> Result<()> {
+/// Fetch and print `count` consecutive period stats (days, weeks, ...).
+fn show_periods(conn: &Connection, count: usize, topics: &[String], period: Period) -> Result<()> {
     let now = Local::now();
     let mut periods = Vec::new();
 
     for i in 0..count {
-        let days_back = i as i64;
-        let day_start = (now - Duration::days(days_back))
-            .date_naive()
-            .and_hms_opt(0, 0, 0)
-            .unwrap();
-        let day_end = if i == 0 {
-            now.naive_local()
-        } else {
-            day_start + Duration::days(1)
-        };
-
-        let label = if i == 0 {
-            "Today".to_string()
-        } else if i == 1 {
-            "Yesterday".to_string()
-        } else {
-            day_start.format("%A, %d.%m.%Y").to_string()
-        };
-
-        let topics = queries::get_period_stats(conn, day_start, day_end, topics)?;
-        periods.push(queries::PeriodStats { label, topics });
-    }
-
-    display::print_period_stats(&periods);
-    Ok(())
-}
-
-fn show_weeks(conn: &Connection, count: usize, topics: &[String]) -> Result<()> {
-    let now = Local::now();
-    let mut periods = Vec::new();
-
-    for i in 0..count {
-        let days_back = (i * 7) as i64;
-        let week_start = (now - Duration::days(days_back + now.weekday().num_days_from_monday() as i64))
-            .date_naive()
-            .and_hms_opt(0, 0, 0)
-            .unwrap();
-        let week_end = if i == 0 {
-            now.naive_local()
-        } else {
-            week_start + Duration::days(7)
-        };
-
-        let label = format!("Week {} ({} - {})",
-                            week_start.format("%V"),
-                            week_start.format("%d.%m"),
-                            week_end.format("%d.%m.%Y")
-        );
-
-        let topics = queries::get_period_stats(conn, week_start, week_end, topics)?;
-        periods.push(queries::PeriodStats { label, topics });
-    }
-
-    display::print_period_stats(&periods);
-    Ok(())
-}
-
-fn show_months(conn: &Connection, count: usize, topics: &[String]) -> Result<()> {
-    let now = Local::now();
-    let mut periods = Vec::new();
-
-    for i in 0..count {
-        let months_back = i as i32;
-        let target_date = if months_back == 0 {
-            now.date_naive()
-        } else {
-            let year = now.year();
-            let month = now.month() as i32;
-            let new_month = ((month - 1 - months_back).rem_euclid(12)) + 1;
-            let new_year = year + (month - 1 - months_back).div_euclid(12);
-            NaiveDate::from_ymd_opt(new_year, new_month as u32, 1).unwrap()
-        };
-
-        let start = target_date.with_day(1).unwrap().and_hms_opt(0, 0, 0).unwrap();
-        let end = if i == 0 {
-            now.naive_local()
-        } else {
-            let next_month = if target_date.month() == 12 {
-                NaiveDate::from_ymd_opt(target_date.year() + 1, 1, 1).unwrap()
-            } else {
-                NaiveDate::from_ymd_opt(target_date.year(), target_date.month() + 1, 1).unwrap()
-            };
-            next_month.and_hms_opt(0, 0, 0).unwrap()
-        };
-
-        let label = target_date.format("%B %Y").to_string();
+        let (label, start, end) = period_bounds(period, &now, i);
         let topics = queries::get_period_stats(conn, start, end, topics)?;
         periods.push(queries::PeriodStats { label, topics });
     }
@@ -384,33 +285,96 @@ fn show_months(conn: &Connection, count: usize, topics: &[String]) -> Result<()>
     Ok(())
 }
 
-fn show_years(conn: &Connection, count: usize, topics: &[String]) -> Result<()> {
-    let now = Local::now();
-    let mut periods = Vec::new();
+/// Label and [start, end) bounds of the `i`-th `period` counting back from
+/// `now` (i = 0 is the current period, which ends at `now`).
+///
+/// The remaining `unwrap()`s are on calendar construction with arguments
+/// that are valid by construction (midnight, day 1, the div_euclid month
+/// arithmetic); they cannot fail.
+fn period_bounds(period: Period, now: &DateTime<Local>, i: usize) -> (String, NaiveDateTime, NaiveDateTime) {
+    match period {
+        Period::Day => {
+            let day_start = (*now - Duration::days(i as i64))
+                .date_naive()
+                .and_hms_opt(0, 0, 0)
+                .unwrap();
+            let day_end = if i == 0 {
+                now.naive_local()
+            } else {
+                day_start + Duration::days(1)
+            };
 
-    for i in 0..count {
-        let years_back = i as i32;
-        let target_year = now.year() - years_back;
+            let label = match i {
+                0 => "Today".to_string(),
+                1 => "Yesterday".to_string(),
+                _ => day_start.format("%A, %d.%m.%Y").to_string(),
+            };
 
-        let start = NaiveDate::from_ymd_opt(target_year, 1, 1)
-            .unwrap()
-            .and_hms_opt(0, 0, 0)
+            (label, day_start, day_end)
+        }
+        Period::Week => {
+            let days_back = (i * 7) as i64;
+            let week_start = (*now - Duration::days(days_back + now.weekday().num_days_from_monday() as i64))
+                .date_naive()
+                .and_hms_opt(0, 0, 0)
+                .unwrap();
+            let week_end = if i == 0 {
+                now.naive_local()
+            } else {
+                week_start + Duration::days(7)
+            };
+
+            let label = format!("Week {} ({} - {})",
+                                week_start.format("%V"),
+                                week_start.format("%d.%m"),
+                                week_end.format("%d.%m.%Y")
+            );
+
+            (label, week_start, week_end)
+        }
+        Period::Month => {
+            let months_back = i as i32;
+            let month = now.month() as i32;
+            let year = now.year();
+            let first_of_month = NaiveDate::from_ymd_opt(
+                year + (month - 1 - months_back).div_euclid(12),
+                (((month - 1 - months_back).rem_euclid(12)) + 1) as u32,
+                1,
+            )
             .unwrap();
 
-        let end = if i == 0 {
-            now.naive_local()
-        } else {
-            NaiveDate::from_ymd_opt(target_year + 1, 1, 1)
+            let start = first_of_month.and_hms_opt(0, 0, 0).unwrap();
+            let end = if i == 0 {
+                now.naive_local()
+            } else {
+                let next_month = if first_of_month.month() == 12 {
+                    NaiveDate::from_ymd_opt(first_of_month.year() + 1, 1, 1).unwrap()
+                } else {
+                    NaiveDate::from_ymd_opt(first_of_month.year(), first_of_month.month() + 1, 1).unwrap()
+                };
+                next_month.and_hms_opt(0, 0, 0).unwrap()
+            };
+
+            (first_of_month.format("%B %Y").to_string(), start, end)
+        }
+        Period::Year => {
+            let target_year = now.year() - i as i32;
+
+            let start = NaiveDate::from_ymd_opt(target_year, 1, 1)
                 .unwrap()
                 .and_hms_opt(0, 0, 0)
-                .unwrap()
-        };
+                .unwrap();
 
-        let label = format!("{}", target_year);
-        let topics = queries::get_period_stats(conn, start, end, topics)?;
-        periods.push(queries::PeriodStats { label, topics });
+            let end = if i == 0 {
+                now.naive_local()
+            } else {
+                NaiveDate::from_ymd_opt(target_year + 1, 1, 1)
+                    .unwrap()
+                    .and_hms_opt(0, 0, 0)
+                    .unwrap()
+            };
+
+            (format!("{}", target_year), start, end)
+        }
     }
-
-    display::print_period_stats(&periods);
-    Ok(())
 }
