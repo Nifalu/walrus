@@ -247,11 +247,9 @@ pub fn add(conn: &Connection, topic: String, start: String, end: String) -> Resu
         anyhow::bail!("End time must be after start time");
     }
 
-    queries::insert_session(conn, &topic, &start_dt, &end_dt)?;
+    queries::insert_session(conn, &topic, start_dt, end_dt)?;
 
-    let duration = end_dt.parse::<chrono::DateTime<chrono::FixedOffset>>()?
-        .signed_duration_since(start_dt.parse::<chrono::DateTime<chrono::FixedOffset>>()?);
-    let hours = duration.num_seconds() as f64 / 3600.0;
+    let hours = end_dt.signed_duration_since(start_dt).num_seconds() as f64 / 3600.0;
 
     println!("Added: {} ({:.2}h)", topic, hours);
     Ok(())
@@ -262,18 +260,27 @@ pub fn edit(conn: &Connection, id: i64, topic: Option<String>, start: Option<Str
         anyhow::bail!("Session with ID {} not found", id);
     }
 
+    // Parse everything first so an invalid value aborts before any column
+    // is written, instead of leaving a half-updated session behind.
+    let start_dt = start.map(|s| queries::parse_datetime(&s)).transpose()?;
+    let end_dt = end.map(|e| queries::parse_datetime(&e)).transpose()?;
+
+    if let (Some(start), Some(end)) = (&start_dt, &end_dt) {
+        if end <= start {
+            anyhow::bail!("End time must be after start time");
+        }
+    }
+
     if let Some(t) = topic {
         queries::update_session_topic(conn, id, &t)?;
     }
 
-    if let Some(s) = start {
-        let start_dt = queries::parse_datetime(&s)?;
-        queries::update_session_start(conn, id, &start_dt)?;
+    if let Some(start) = start_dt {
+        queries::update_session_start(conn, id, start)?;
     }
 
-    if let Some(e) = end {
-        let end_dt = queries::parse_datetime(&e)?;
-        queries::update_session_end(conn, id, &end_dt)?;
+    if let Some(end) = end_dt {
+        queries::update_session_end(conn, id, end)?;
     }
 
     println!("Updated session {}", id);

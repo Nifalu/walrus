@@ -313,32 +313,35 @@ pub fn update_session_topic(conn: &Connection, id: i64, topic: &str) -> Result<(
     Ok(())
 }
 
-pub fn update_session_start(conn: &Connection, id: i64, start: &str) -> Result<()> {
-    conn.execute("UPDATE sessions SET start_time = ?1 WHERE id = ?2", rusqlite::params![start, id])?;
+pub fn update_session_start(conn: &Connection, id: i64, start: DateTime<chrono::FixedOffset>) -> Result<()> {
+    conn.execute("UPDATE sessions SET start_time = ?1 WHERE id = ?2", rusqlite::params![start.to_rfc3339(), id])?;
     Ok(())
 }
 
-pub fn update_session_end(conn: &Connection, id: i64, end: &str) -> Result<()> {
-    conn.execute("UPDATE sessions SET end_time = ?1 WHERE id = ?2", rusqlite::params![end, id])?;
+pub fn update_session_end(conn: &Connection, id: i64, end: DateTime<chrono::FixedOffset>) -> Result<()> {
+    conn.execute("UPDATE sessions SET end_time = ?1 WHERE id = ?2", rusqlite::params![end.to_rfc3339(), id])?;
     Ok(())
 }
 
-pub fn insert_session(conn: &Connection, topic: &str, start: &str, end: &str) -> Result<()> {
+pub fn insert_session(conn: &Connection, topic: &str, start: DateTime<chrono::FixedOffset>, end: DateTime<chrono::FixedOffset>) -> Result<()> {
     conn.execute(
         "INSERT INTO sessions (topic, start_time, end_time) VALUES (?1, ?2, ?3)",
-        rusqlite::params![topic, start, end],
+        rusqlite::params![topic, start.to_rfc3339(), end.to_rfc3339()],
     )?;
     Ok(())
 }
 
-pub fn parse_datetime(s: &str) -> Result<String> {
+/// Parse a "DD.MM.YYYY HH:MM" user-supplied datetime into an aware local
+/// datetime; errors on DST-gap or ambiguous local times.
+pub fn parse_datetime(s: &str) -> Result<DateTime<chrono::FixedOffset>> {
     let dt = NaiveDateTime::parse_from_str(s, "%d.%m.%Y %H:%M")
         .map_err(|_| anyhow::anyhow!("Invalid datetime format. Use DD.MM.YYYY HH:MM"))?;
 
-    let local_dt = Local.from_local_datetime(&dt).single()
-        .ok_or_else(|| anyhow::anyhow!("Ambiguous datetime"))?;
-
-    Ok(local_dt.to_rfc3339())
+    Ok(Local
+        .from_local_datetime(&dt)
+        .single()
+        .ok_or_else(|| anyhow::anyhow!("Ambiguous datetime"))?
+        .into())
 }
 
 /// Total finished hours per topic, most time first. An empty `topics`
